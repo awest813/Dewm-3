@@ -101,8 +101,9 @@ if you haven't already, then run the setup script from the repository root:
 
 This installs the required libraries, auto-detects your CPU (arm64 or x86_64),
 configures, builds dhewm3, and produces a **`dhewm3.app` bundle + DMG** in
-the repository root in one step.  To launch, double-click `dhewm3.app`
-(a folder-picker guides you to your Doom 3 data on first launch), or run:
+the repository root in one step. To launch, double-click `dhewm3.app`; on
+first launch it prompts you to choose your Doom 3 data folder and saves that
+path for future runs. You can also run:
 
 ```sh
 ./scripts/macos-run.sh              # auto-discovers Steam / GOG game data
