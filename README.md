@@ -100,12 +100,20 @@ if you haven't already, then run the setup script from the repository root:
 ```
 
 This installs the required libraries, auto-detects your CPU (arm64 or x86_64),
-configures, and builds dhewm3 in one step.  To launch, run:
+configures, builds dhewm3, and produces a **`dhewm3.app` bundle + DMG** in
+the repository root in one step.  To launch, double-click `dhewm3.app`
+(a folder-picker guides you to your Doom 3 data on first launch), or run:
 
 ```sh
 ./scripts/macos-run.sh              # auto-discovers Steam / GOG game data
 ./scripts/macos-run.sh /path/to/doom3/   # or supply the path explicitly
 ```
+
+> **Just want to play without compiling?** Download a pre-built DMG from the
+> [Actions tab](../../actions/workflows/macos.yml) → latest passing run →
+> download the `dhewm3-macos-arm64` or `dhewm3-macos-x86_64` artifact.
+> Open the DMG, drag `dhewm3` to Applications, launch, and pick your game data
+> folder when prompted.
 
 For manual CMake invocations, named CMake presets are available in `neo/CMakePresets.json`:
 

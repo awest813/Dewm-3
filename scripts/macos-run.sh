@@ -16,6 +16,17 @@ if [[ ! -x "$BINARY" ]]; then
   exit 1
 fi
 
+# ── Saved path from first-run launcher (dhewm3.app) ──────────────────────────
+PREFS_FILE="$HOME/Library/Application Support/dhewm3/gamepath"
+if [[ -f "$PREFS_FILE" ]]; then
+  SAVED="$(cat "$PREFS_FILE")"
+  SAVED="${SAVED%/}"
+  if [[ -d "$SAVED/base" ]]; then
+    echo "Using saved game data path: $SAVED"
+    exec "$BINARY" +set fs_basepath "$SAVED"
+  fi
+fi
+
 # ── Explicit path ─────────────────────────────────────────────────────────────
 if [[ $# -ge 1 ]]; then
   GAME_DATA="$1"
@@ -28,14 +39,28 @@ fi
 
 # ── Auto-discover common macOS Doom 3 install locations ──────────────────────
 CANDIDATES=(
-  # Steam (default library)
+  # Steam default library
   "$HOME/Library/Application Support/Steam/steamapps/common/Doom 3"
-  # Steam (alternate library on an external drive, etc.)
-  "/Volumes/Steam/steamapps/common/Doom 3"
-  # GOG / manual install convention
+  # GOG / manual installs
   "$HOME/Games/Doom 3"
   "/Applications/Doom 3"
+  "$HOME/Library/Application Support/Doom 3"
 )
+
+# Parse Steam libraryfolders.vdf for additional Steam library roots
+VDF="$HOME/Library/Application Support/Steam/steamapps/libraryfolders.vdf"
+if [[ -f "$VDF" ]]; then
+  while IFS= read -r LINE; do
+    if [[ "$LINE" =~ \"path\"[[:space:]]*\"([^\"]+)\" ]]; then
+      CANDIDATES+=("${BASH_REMATCH[1]}/steamapps/common/Doom 3")
+    fi
+  done < "$VDF"
+fi
+
+# External volumes — any mounted volume with a Steam library or bare Doom 3 folder
+for VOL_PATH in /Volumes/*/steamapps/common/Doom\ 3 /Volumes/*/Doom\ 3; do
+  [[ -d "$VOL_PATH" ]] && CANDIDATES+=("$VOL_PATH")
+done
 
 for CANDIDATE in "${CANDIDATES[@]}"; do
   if [[ -d "$CANDIDATE/base" ]]; then
