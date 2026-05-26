@@ -2,6 +2,16 @@ name: macOS build
 
 # Builds dhewm3 on macOS Apple Silicon (primary) and Intel (secondary).
 # See docs/MACOS.md for the full support matrix.
+#
+# Signing / notarization:
+#   The "release-sign" job runs on workflow_dispatch with sign=true.
+#   Required secrets (set in repo Settings → Secrets):
+#     MACOS_CERTIFICATE        — base64-encoded .p12 signing certificate
+#     MACOS_CERTIFICATE_PWD    — password for the .p12
+#     MACOS_KEYCHAIN_PWD       — temp keychain password (any string)
+#     NOTARIZE_APPLE_ID        — Apple ID used for notarization
+#     NOTARIZE_TEAM_ID         — 10-char Apple Developer Team ID
+#     NOTARIZE_PASSWORD        — app-specific password for the Apple ID
 
 on:
   push:
@@ -15,6 +25,13 @@ on:
       - '**.md'
       - 'docs/**'
   workflow_dispatch:
+    inputs:
+      sign:
+        description: 'Sign and notarize the universal binary (requires signing secrets)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 jobs:
   build:
@@ -57,6 +74,11 @@ jobs:
           ./build/dhewm3 -h > smoke.log 2>&1 || true
           head -n 20 smoke.log
 
+      - name: Assemble .app bundle and DMG
+        run: |
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          ./scripts/macos-bundle.sh build
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -64,5 +86,94 @@ jobs:
           path: |
             build/dhewm3
             build/*.dylib
+            dhewm3.app/
+            dhewm3-${{ matrix.arch }}.dmg
           if-no-files-found: warn
+
+  # ── Optional: sign + notarize universal binary ──────────────────────────────
+  # Runs only when triggered via workflow_dispatch with sign=true.
+  # Requires all MACOS_CERTIFICATE* and NOTARIZE_* secrets to be set.
+  release-sign:
+    name: Sign & Notarize (universal)
+    runs-on: macos-14
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.sign == 'true'
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Homebrew)
+        run: |
+          brew update
+          brew install cmake openal-soft sdl2 curl
+
+      - name: Build universal binary
+        run: |
+          cmake -S neo --preset macos-universal -B build-release
+          cmake --build build-release --parallel
+
+      - name: Assemble universal .app
+        run: |
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          ./scripts/macos-bundle.sh build-release
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+        run: |
+          echo "$CERTIFICATE_BASE64" | base64 --decode > /tmp/certificate.p12
+          security create-keychain -p "$KEYCHAIN_PWD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PWD" build.keychain
+          security import /tmp/certificate.p12 -k build.keychain \
+            -P "$CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PWD" build.keychain
+          rm /tmp/certificate.p12
+
+      - name: Sign .app bundle
+        env:
+          TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+        run: |
+          codesign --deep --force --options runtime \
+            --sign "Developer ID Application: $TEAM_ID" \
+            dhewm3.app
+
+      - name: Package signed DMG
+        run: |
+          # Re-create DMG from the signed .app (overrides the unsigned one)
+          STAGING="$(mktemp -d)"
+          cp -R dhewm3.app "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create \
+            -volname "dhewm3" \
+            -srcfolder "$STAGING" \
+            -ov \
+            -format UDZO \
+            dhewm3-universal.dmg
+          rm -rf "$STAGING"
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+          APP_PWD: ${{ secrets.NOTARIZE_PASSWORD }}
+        run: |
+          xcrun notarytool submit dhewm3-universal.dmg \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PWD" \
+            --wait
+
+      - name: Staple notarization ticket
+        run: xcrun stapler staple dhewm3-universal.dmg
+
+      - name: Upload signed release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dhewm3-macos-universal-signed
+          path: dhewm3-universal.dmg
+          if-no-files-found: error
 

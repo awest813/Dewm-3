@@ -14,3 +14,7 @@
 /.vs*
 
 /neo/CMakeSettings.json
+
+# Generated Mac app bundle and disk images (created by scripts/macos-bundle.sh)
+/dhewm3.app/
+/*.dmg

@@ -74,7 +74,13 @@ file "$BUILD_DIR/dhewm3"
 echo ""
 echo "Build successful!  Binary: $BUILD_DIR/dhewm3"
 echo ""
-echo "To launch dhewm3, run:"
+
+# ── 7. Assemble .app bundle and DMG ───────────────────────────────────────────
+echo "==> Assembling dhewm3.app and creating DMG…"
+"$REPO_ROOT/scripts/macos-bundle.sh" "$BUILD_DIR"
+
+echo ""
+echo "To launch dhewm3, double-click dhewm3.app — or run:"
 echo "  ./scripts/macos-run.sh"
 echo "Or supply your Doom 3 data path directly:"
 echo "  ./scripts/macos-run.sh /path/to/doom3/"
