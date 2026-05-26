@@ -1,5 +1,58 @@
-cmake_minimum_required(VERSION 2.6...3.22 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.13...3.28 FATAL_ERROR)
 project(dhewm3)
+
+# --- macOS modernization (Apple Silicon first, Intel optional) ---
+# Set canonical macOS deployment target and architectures BEFORE project-wide
+# compiler checks. These can be overridden on the CMake command line, e.g.:
+#   -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_OSX_ARCHITECTURES=arm64
+# For a universal binary use: -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+if(APPLE)
+	if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL "")
+		# Default minimum: macOS 11 (Big Sur) - first arm64-capable release.
+		# Intel-only builds can lower this on the command line if needed.
+		set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING
+			"Minimum macOS deployment target (default 11.0 for Apple Silicon support)")
+	endif()
+
+	if(NOT DEFINED CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "")
+		# Default to the host architecture (single-arch build). Set explicitly to
+		# "arm64;x86_64" to produce a universal binary.
+		if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64"
+				OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64")
+			set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING
+				"macOS architectures to build for")
+		else()
+			set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING
+				"macOS architectures to build for")
+		endif()
+	endif()
+
+	# Help find_package() find Homebrew-installed dependencies (openal-soft, sdl2, curl).
+	# Apple Silicon Homebrew lives in /opt/homebrew, Intel Homebrew in /usr/local.
+	if(NOT DEFINED HOMEBREW_PREFIX)
+		if(EXISTS "/opt/homebrew")
+			set(HOMEBREW_PREFIX "/opt/homebrew")
+		elseif(EXISTS "/usr/local/Homebrew")
+			set(HOMEBREW_PREFIX "/usr/local")
+		endif()
+	endif()
+	if(HOMEBREW_PREFIX)
+		message(STATUS "dhewm3: detected Homebrew prefix at ${HOMEBREW_PREFIX}")
+		# openal-soft is keg-only in Homebrew, so it isn't on the default search path.
+		list(APPEND CMAKE_PREFIX_PATH
+			"${HOMEBREW_PREFIX}"
+			"${HOMEBREW_PREFIX}/opt/openal-soft"
+			"${HOMEBREW_PREFIX}/opt/sdl2"
+			"${HOMEBREW_PREFIX}/opt/curl")
+		# Hints for legacy Find modules that read these env vars.
+		if(NOT DEFINED ENV{OPENALDIR})
+			set(ENV{OPENALDIR} "${HOMEBREW_PREFIX}/opt/openal-soft")
+		endif()
+		if(NOT DEFINED ENV{SDL2DIR})
+			set(ENV{SDL2DIR} "${HOMEBREW_PREFIX}/opt/sdl2")
+		endif()
+	endif()
+endif()
 
 # TODO
 
@@ -384,33 +437,24 @@ if(D3_COMPILER_IS_GCC_OR_CLANG)
 	elseif(APPLE)
 		add_definitions(-DMACOS_X=1)
 
-		if(cpu STREQUAL "x86_64")
-			add_compile_options(-arch x86_64 -mmacosx-version-min=10.7)
-			set(ldflags "${ldflags} -arch x86_64 -mmacosx-version-min=10.7")
-		elseif(cpu STREQUAL "arm64")
-			add_compile_options(-arch arm64 -mmacosx-version-min=10.7)
-			set(ldflags "${ldflags} -arch arm64 -mmacosx-version-min=10.7")
-		elseif(cpu STREQUAL "x86")
-			CHECK_CXX_COMPILER_FLAG("-arch i386" cxx_has_arch_i386)
-			if(cxx_has_arch_i386)
-				add_compile_options(-arch i386)
-				set(ldflags "${ldflags} -arch i386")
+		# Architecture and deployment target are configured via the canonical
+		# CMAKE_OSX_ARCHITECTURES / CMAKE_OSX_DEPLOYMENT_TARGET variables near
+		# the top of this file. CMake/clang inject the appropriate -arch and
+		# -mmacosx-version-min flags automatically for every target.
+		#
+		# Validate that the requested architecture(s) are supported by dhewm3.
+		set(_d3_supported_osx_archs "arm64;x86_64")
+		foreach(_arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+			if(NOT _arch IN_LIST _d3_supported_osx_archs)
+				message(FATAL_ERROR
+					"Unsupported macOS architecture '${_arch}'. "
+					"dhewm3 supports arm64 (Apple Silicon, primary) and x86_64 (Intel, secondary). "
+					"Use -DCMAKE_OSX_ARCHITECTURES=arm64 or x86_64 (or \"arm64;x86_64\" for a universal build).")
 			endif()
+		endforeach()
+		unset(_d3_supported_osx_archs)
 
-			add_compile_options(-mmacosx-version-min=10.4)
-			set(ldflags "${ldflags} -mmacosx-version-min=10.4")
-		elseif(cpu STREQUAL "ppc")
-			CHECK_CXX_COMPILER_FLAG("-arch ppc" cxx_has_arch_ppc)
-			if(cxx_has_arch_ppc)
-				add_compile_options(-arch ppc -mone-byte-bool)
-				set(ldflags "${ldflags} -arch ppc -mone-byte-bool")
-			endif()
-
-			add_compile_options(-mmacosx-version-min=10.4)
-			set(ldflags "${ldflags} -mmacosx-version-min=10.4")
-		else()
-			message(FATAL_ERROR "Unsupported CPU architecture for OSX")
-		endif()
+		message(STATUS "Building for macOS architectures: ${CMAKE_OSX_ARCHITECTURES} (min ${CMAKE_OSX_DEPLOYMENT_TARGET})")
 
 		set(sys_libs ${sys_libs} "-framework Carbon -framework Cocoa -framework IOKit")
 	elseif(WIN32)

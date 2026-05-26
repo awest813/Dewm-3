@@ -92,13 +92,20 @@ the cmake command there, pointing it at the neo/ folder from this repository:
 
 `cmake /path/to/repository/neo`
 
-**macOS** users need to point CMake at OpenAL Soft (better solutions welcome):
+**macOS** users: install dependencies with Homebrew and configure as usual.
+The build system auto-detects the Homebrew prefix (both `/opt/homebrew` on
+Apple Silicon and `/usr/local` on Intel) and finds OpenAL Soft, SDL2 and
+curl without extra flags:
 
-`cmake -DOPENAL_LIBRARY=/usr/local/opt/openal-soft/lib/libopenal.dylib -DOPENAL_INCLUDE_DIR=/usr/local/opt/openal-soft/include /path/to/repository/neo`
+```
+brew install cmake openal-soft sdl2 curl
+cmake -S /path/to/repo/neo -B build
+cmake --build build --parallel
+```
 
-Newer versions of Homebrew install openal-soft to another directory, so use this instead:
-
-`cmake -DOPENAL_LIBRARY="/opt/homebrew/opt/openal-soft/lib/libopenal.dylib" -DOPENAL_INCLUDE_DIR="/opt/homebrew/opt/openal-soft/include" /path/to/repo/neo`
+See [docs/MACOS.md](./docs/MACOS.md) for the full Apple Silicon / Intel
+support matrix, deployment-target defaults, universal-binary policy, the
+release maintainer guide, and troubleshooting.
 
 ### Compiling example using Ubuntu
 

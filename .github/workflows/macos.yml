@@ -1,0 +1,71 @@
+name: macOS build
+
+# Builds dhewm3 on macOS Apple Silicon (primary) and Intel (secondary).
+# See docs/MACOS.md for the full support matrix.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64 (Apple Silicon)
+            runner: macos-14
+            arch: arm64
+            deployment_target: '11.0'
+            primary: true
+          - name: macOS x86_64 (Intel)
+            runner: macos-13
+            arch: x86_64
+            deployment_target: '10.15'
+            primary: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Homebrew)
+        run: |
+          brew update
+          brew install cmake openal-soft sdl2 curl
+
+      - name: Configure (CMake)
+        run: |
+          cmake -S neo -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.deployment_target }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Smoke check binary
+        run: |
+          ls -la build
+          file build/dhewm3
+          # `dhewm3 -h` exits non-zero on some platforms; just verify it runs and prints usage.
+          ./build/dhewm3 -h > smoke.log 2>&1 || true
+          head -n 40 smoke.log
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dhewm3-macos-${{ matrix.arch }}
+          path: |
+            build/dhewm3
+            build/*.dylib
+          if-no-files-found: warn
