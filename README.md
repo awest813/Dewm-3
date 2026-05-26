@@ -92,20 +92,32 @@ the cmake command there, pointing it at the neo/ folder from this repository:
 
 `cmake /path/to/repository/neo`
 
-**macOS** users: install dependencies with Homebrew and configure as usual.
-The build system auto-detects the Homebrew prefix (both `/opt/homebrew` on
-Apple Silicon and `/usr/local` on Intel) and finds OpenAL Soft, SDL2 and
-curl without extra flags:
+**macOS** users (Apple Silicon and Intel): install [Homebrew](https://brew.sh)
+if you haven't already, then run the setup script from the repository root:
 
+```sh
+./scripts/macos-setup.sh
 ```
+
+This installs the required libraries, auto-detects your CPU (arm64 or x86_64),
+configures, and builds dhewm3 in one step.  To launch, run:
+
+```sh
+./scripts/macos-run.sh              # auto-discovers Steam / GOG game data
+./scripts/macos-run.sh /path/to/doom3/   # or supply the path explicitly
+```
+
+For manual CMake invocations, named CMake presets are available in `neo/CMakePresets.json`:
+
+```sh
 brew install cmake openal-soft sdl2 curl
-cmake -S /path/to/repo/neo -B build
+cmake -S neo --preset macos-arm64   # Apple Silicon (use macos-intel for Intel)
 cmake --build build --parallel
 ```
 
 See [docs/MACOS.md](./docs/MACOS.md) for the full Apple Silicon / Intel
-support matrix, deployment-target defaults, universal-binary policy, the
-release maintainer guide, and troubleshooting.
+support matrix, deployment-target defaults, game-data setup, CMake preset
+reference, CI integration, troubleshooting, and the release maintainer guide.
 
 ### Compiling example using Ubuntu
 

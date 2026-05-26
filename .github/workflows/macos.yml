@@ -26,13 +26,13 @@ jobs:
         include:
           - name: macOS arm64 (Apple Silicon)
             runner: macos-14
+            preset: macos-arm64
             arch: arm64
-            deployment_target: '11.0'
             primary: true
           - name: macOS x86_64 (Intel)
             runner: macos-13
+            preset: macos-intel
             arch: x86_64
-            deployment_target: '10.15'
             primary: false
 
     steps:
@@ -43,23 +43,19 @@ jobs:
           brew update
           brew install cmake openal-soft sdl2 curl
 
-      - name: Configure (CMake)
-        run: |
-          cmake -S neo -B build \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.deployment_target }}
+      - name: Configure (CMake preset)
+        run: cmake -S neo --preset ${{ matrix.preset }} -B build
 
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Smoke check binary
+      - name: Verify binary
         run: |
-          ls -la build
           file build/dhewm3
-          # `dhewm3 -h` exits non-zero on some platforms; just verify it runs and prints usage.
+          otool -L build/dhewm3 | grep -E 'openal|SDL2|curl' || true
+          # dhewm3 -h may exit non-zero; capture output and confirm it ran
           ./build/dhewm3 -h > smoke.log 2>&1 || true
-          head -n 40 smoke.log
+          head -n 20 smoke.log
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -69,3 +65,4 @@ jobs:
             build/dhewm3
             build/*.dylib
           if-no-files-found: warn
+
