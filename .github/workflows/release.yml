@@ -109,14 +109,22 @@ jobs:
                -output build-universal/dhewm3
           chmod +x build-universal/dhewm3
 
-          # Merge game dylibs (base.dylib, d3xp.dylib, …) if both arches built them
-          for LIB in engine-arm64/*.dylib; do
-            LIBNAME="$(basename "$LIB")"
-            if [[ -f "engine-x86_64/$LIBNAME" ]]; then
+          # Merge game dylibs (base.dylib, d3xp.dylib, …) from both arch builds.
+          # If a dylib exists in both, create a universal binary via lipo.
+          shopt -s nullglob
+          declare -A dylibs=()
+          for LIB in engine-arm64/*.dylib engine-x86_64/*.dylib; do
+            dylibs["$(basename "$LIB")"]=1
+          done
+
+          for LIBNAME in "${!dylibs[@]}"; do
+            if [[ -f "engine-arm64/$LIBNAME" && -f "engine-x86_64/$LIBNAME" ]]; then
               lipo -create "engine-arm64/$LIBNAME" "engine-x86_64/$LIBNAME" \
                    -output "build-universal/$LIBNAME"
+            elif [[ -f "engine-arm64/$LIBNAME" ]]; then
+              cp "engine-arm64/$LIBNAME" "build-universal/$LIBNAME"
             else
-              cp "$LIB" "build-universal/$LIBNAME"
+              cp "engine-x86_64/$LIBNAME" "build-universal/$LIBNAME"
             fi
           done
 
@@ -170,13 +178,32 @@ jobs:
             -s -k "$KEYCHAIN_PWD" build.keychain
           rm /tmp/certificate.p12
 
-      - name: Sign .app bundle
+      - name: Resolve Developer ID identity
         if: steps.check-secrets.outputs.available == 'true'
+        id: resolve-identity
         env:
           TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
         run: |
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain \
+            | sed -n 's/.*"\(Developer ID Application: .*\)".*/\1/p' \
+            | grep "($TEAM_ID)" \
+            | head -n 1 || true)"
+
+          if [[ -z "$IDENTITY" ]]; then
+            echo "No Developer ID Application identity found for Team ID '$TEAM_ID'."
+            echo "Available code-signing identities:"
+            security find-identity -v -p codesigning build.keychain || true
+            exit 1
+          fi
+
+          echo "Using identity: $IDENTITY"
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+
+      - name: Sign .app bundle
+        if: steps.check-secrets.outputs.available == 'true'
+        run: |
           codesign --deep --force --options runtime \
-            --sign "Developer ID Application: $TEAM_ID" \
+            --sign "${{ steps.resolve-identity.outputs.identity }}" \
             dhewm3.app
 
       - name: Repackage signed DMG
