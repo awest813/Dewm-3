@@ -243,6 +243,13 @@ if(CMAKE_MAJOR_VERSION LESS 3 OR ( CMAKE_MAJOR_VERSION EQUAL 3 AND CMAKE_MINOR_V
 endif()
 
 # libs
+# On macOS, CMake's FindOpenAL prefers the system OpenAL.framework (headers at
+# <OpenAL/al.h>) over Homebrew's openal-soft (headers at <AL/al.h>).  Inject
+# the Homebrew openal-soft include path BEFORE any system paths so that
+# #include <AL/al.h> resolves to the correct location.
+if(APPLE AND HOMEBREW_PREFIX AND EXISTS "${HOMEBREW_PREFIX}/opt/openal-soft/include")
+	include_directories(BEFORE "${HOMEBREW_PREFIX}/opt/openal-soft/include")
+endif()
 find_package(OpenAL REQUIRED)
 include_directories(${OPENAL_INCLUDE_DIR})
 
