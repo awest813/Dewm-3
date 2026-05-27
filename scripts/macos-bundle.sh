@@ -8,6 +8,11 @@
 # Output:
 #   dhewm3.app/           — Mac application bundle (in repo root)
 #   dhewm3-<arch>.dmg     — drag-and-drop disk image for distribution
+#
+# Homebrew dylibs (openal-soft, SDL2, curl) are bundled into
+# dhewm3.app/Contents/Frameworks/ so the .app is fully self-contained and
+# works on Macs that do not have Homebrew installed.  Requires dylibbundler:
+#   brew install dylibbundler
 
 set -euo pipefail
 
@@ -62,6 +67,44 @@ if [[ -f "$REPO_ROOT/dist/macosx/dhewm3.icns" ]]; then
 fi
 
 echo "    $APP_DIR assembled."
+
+# ── Bundle Homebrew dylibs ────────────────────────────────────────────────────
+# Copy openal-soft, SDL2, and curl dylibs (and their transitive deps) into
+# Contents/Frameworks/ and rewrite LC_LOAD_DYLIB paths so the .app works on
+# any Mac without Homebrew installed.
+FRAMEWORKS_DIR="$APP_DIR/Contents/Frameworks"
+mkdir -p "$FRAMEWORKS_DIR"
+
+if command -v dylibbundler &>/dev/null; then
+  echo "==> Bundling Homebrew dylibs with dylibbundler…"
+  # Bundle deps for the engine binary
+  dylibbundler \
+    --fix-file "$APP_DIR/Contents/MacOS/dhewm3" \
+    --bundle-deps \
+    --dest-dir "$FRAMEWORKS_DIR" \
+    --install-path "@executable_path/../Frameworks" \
+    --overwrite-dir \
+    --quiet
+
+  # Bundle deps for any game .dylibs (base.dylib, d3xp.dylib, …)
+  for GAME_LIB in "$APP_DIR/Contents/MacOS/"*.dylib; do
+    [[ -f "$GAME_LIB" ]] || continue
+    dylibbundler \
+      --fix-file "$GAME_LIB" \
+      --bundle-deps \
+      --dest-dir "$FRAMEWORKS_DIR" \
+      --install-path "@executable_path/../Frameworks" \
+      --overwrite-dir \
+      --quiet
+  done
+
+  echo "    Homebrew dylibs bundled into $FRAMEWORKS_DIR"
+else
+  echo "WARNING: dylibbundler not found — Homebrew dylibs will NOT be bundled."
+  echo "         Install it with:  brew install dylibbundler"
+  echo "         The .app will only work on Macs that have the same Homebrew"
+  echo "         libraries installed (openal-soft, sdl2, curl)."
+fi
 
 # ── Create DMG ────────────────────────────────────────────────────────────────
 DMG_NAME="dhewm3-${ARCH_SUFFIX}.dmg"

@@ -22,7 +22,7 @@ fi
 
 # ── 2. Install dependencies ──────────────────────────────────────────────────
 echo "==> Installing build dependencies via Homebrew…"
-brew install cmake openal-soft sdl2 curl
+brew install cmake openal-soft sdl2 curl dylibbundler
 
 # ── 3. Select CMake preset ───────────────────────────────────────────────────
 if [[ $# -ge 1 ]]; then
