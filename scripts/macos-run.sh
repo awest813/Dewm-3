@@ -10,6 +10,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BINARY="$REPO_ROOT/build/dhewm3"
 
+# Fall back to build-release/ (universal / release builds)
+if [[ ! -x "$BINARY" && -x "$REPO_ROOT/build-release/dhewm3" ]]; then
+  BINARY="$REPO_ROOT/build-release/dhewm3"
+  echo "Using release build: $BINARY"
+fi
+
 if [[ ! -x "$BINARY" ]]; then
   echo "Error: dhewm3 binary not found at $BINARY"
   echo "Run ./scripts/macos-setup.sh first to build it."

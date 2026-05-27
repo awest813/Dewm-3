@@ -12,12 +12,21 @@ secondary, best-effort target**.
 
 1. **Get Doom 3 game data** — buy *DOOM 3* on [Steam](https://store.steampowered.com/app/208200/DOOM_3/) or GOG and install it. You need patch 1.3.1; the Steam version is already patched.
 
-2. **Download the latest `dhewm3-macos-arm64.dmg`** (Apple Silicon) or `dhewm3-macos-x86_64.dmg` (Intel) from the [Actions tab](../../actions/workflows/macos.yml) → pick the latest passing run → download the artifact.  
-   *(Pre-built signed+notarized DMGs will be available on the Releases page once a signed release is published.)*
+2. **Download the latest DMG** from the [Releases page](../../releases/latest):
+   - `dhewm3-macos-arm64.dmg` — Apple Silicon (M1/M2/M3)
+   - `dhewm3-macos-x86_64.dmg` — Intel
+   - `dhewm3-macos-universal-signed.dmg` — both arches, signed + notarized *(no Gatekeeper prompt)*
 
 3. **Open the DMG** — drag `dhewm3` to your Applications folder.
 
 4. **Launch `dhewm3`** — on first launch a folder-picker appears automatically. Select your Doom 3 installation folder (the one that contains `base/`). The path is saved; future launches go straight to the game.
+
+> **First-time macOS security note**  
+> If macOS says *"dhewm3 cannot be opened because it is from an unidentified developer"*,
+> right-click (or Control-click) `dhewm3` in your Applications folder, choose **Open**,
+> then click **Open** in the dialog. You only need to do this once.  
+> Use the **signed** DMG (`dhewm3-macos-universal-signed.dmg`) to skip this entirely.
+> See [SIGNING.md](./SIGNING.md) for how maintainers configure signing.
 
 That is it. The rest of this document covers build-from-source, CMake presets, CI, signing, and release procedures.
 
@@ -116,13 +125,17 @@ You can also pass the path directly to the binary:
 Install [Homebrew](https://brew.sh) and the runtime dependencies:
 
 ```sh
-brew install cmake openal-soft sdl2 curl
+brew install cmake openal-soft sdl2 curl dylibbundler
 ```
 
 The build system auto-detects Homebrew at either `/opt/homebrew` (Apple
 Silicon) or `/usr/local` (Intel) and configures `find_package()` accordingly.
 You do **not** need to pass `-DOPENAL_LIBRARY=...` / `-DOPENAL_INCLUDE_DIR=...`
 manually.
+
+`dylibbundler` is used by `scripts/macos-bundle.sh` to bundle Homebrew runtime
+libraries into `dhewm3.app/Contents/Frameworks/`, making the `.app` fully
+self-contained on Macs without Homebrew.
 
 ### Using the setup script (recommended)
 
@@ -214,8 +227,11 @@ lipo -info build-release/dhewm3
 
 ## CI
 
-GitHub Actions builds this fork on every push/PR via
-[`.github/workflows/macos.yml`](../.github/workflows/macos.yml):
+Two workflows cover macOS:
+
+### `macos.yml` — continuous integration (every push / PR)
+
+[`.github/workflows/macos.yml`](../.github/workflows/macos.yml)
 
 | Job                         | Runner      | Preset         | Status    |
 | --------------------------- | ----------- | -------------- | --------- |
@@ -223,18 +239,31 @@ GitHub Actions builds this fork on every push/PR via
 | macOS x86_64 (Intel)        | `macos-13`  | `macos-intel`  | Secondary |
 
 Each job runs: install deps → configure with the named preset → build →
-smoke check (`dhewm3 -h`) → assemble `dhewm3.app` + DMG → upload artifacts
-(`dhewm3-macos-arm64` or `dhewm3-macos-x86_64`).
+smoke check (`dhewm3 -h`) → assemble `dhewm3.app` + DMG (with bundled
+Homebrew dylibs) → upload artifacts (`dhewm3-macos-arm64` or
+`dhewm3-macos-x86_64`).
 
-Artifacts from passing CI runs are downloadable from the **Actions** tab and
-are the recommended way for users to get pre-built binaries without compiling.
+### `release.yml` — tagged releases
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml)
+
+Triggered on `v*` tags. Builds arm64 and x86_64, then assembles a
+universal binary with `lipo` (no dual-Homebrew setup needed), runs
+optional signing + notarization, and publishes all DMGs to the GitHub
+**Releases** page.
+
+| Job        | Output                                                   |
+|------------|----------------------------------------------------------|
+| `build`    | `dhewm3-macos-arm64.dmg`, `dhewm3-macos-x86_64.dmg`     |
+| `universal`| `dhewm3-macos-universal.dmg` (+ signed variant if configured) |
+| `publish`  | GitHub Release with all DMGs attached                    |
 
 ### Signed releases
 
-A separate `release-sign` job (triggered via `workflow_dispatch` → *sign=true*)
-builds a universal binary, signs it with a Developer ID certificate, notarizes
-it with Apple, and staples the ticket — producing a Gatekeeper-trusted
-`dhewm3-universal.dmg`.
+When the signing secrets listed in [docs/SIGNING.md](./SIGNING.md) are
+configured, the `release.yml` `universal` job also produces a
+`dhewm3-macos-universal-signed.dmg` that is fully signed, notarized,
+and Gatekeeper-trusted — no "right-click → Open" workaround required.
 
 Required repository secrets (set in Settings → Secrets → Actions):
 
@@ -247,20 +276,41 @@ Required repository secrets (set in Settings → Secrets → Actions):
 | `NOTARIZE_TEAM_ID` | 10-character Apple Developer Team ID |
 | `NOTARIZE_PASSWORD` | App-specific password for the Apple ID |
 
+See [SIGNING.md](./SIGNING.md) for step-by-step setup instructions.
+
 ---
 
 ## Release builds
 
-For distributable releases, produce a universal binary using the
-`macos-universal` preset (or the setup script):
+### Automated (recommended)
+
+Push a `v*` tag and the [release workflow](../.github/workflows/release.yml)
+takes care of everything: it builds arm64 and x86_64 binaries, merges them
+into a universal binary with `lipo`, bundles all Homebrew dylibs, creates
+DMGs, signs and notarizes (if secrets are configured), and publishes to the
+GitHub Releases page.
 
 ```sh
-# Via script (builds, bundles, and creates DMG)
-./scripts/macos-setup.sh universal
+git tag v1.5.3
+git push origin v1.5.3
+```
 
-# Via preset (manual)
-cmake -S neo --preset macos-universal
-cmake --build build-release --parallel
+### Manual (local)
+
+Build each architecture separately and combine with `lipo`:
+
+```sh
+# Build arm64
+./scripts/macos-setup.sh arm64      # produces build/dhewm3 (arm64)
+cp build/dhewm3 /tmp/dhewm3-arm64
+
+# Build x86_64 (on an Intel Mac or Rosetta shell with x86_64 Homebrew)
+./scripts/macos-setup.sh x86_64     # produces build/dhewm3 (x86_64)
+cp build/dhewm3 /tmp/dhewm3-x86_64
+
+# Combine
+mkdir -p build-release
+lipo -create /tmp/dhewm3-arm64 /tmp/dhewm3-x86_64 -output build-release/dhewm3
 ./scripts/macos-bundle.sh build-release
 ```
 
@@ -271,15 +321,9 @@ file build-release/dhewm3
 lipo -info build-release/dhewm3
 # Both x86_64 and arm64 must be listed.
 
-# Verify the .app and DMG
 plutil -lint dhewm3.app/Contents/Info.plist
 file dhewm3-universal.dmg
 ```
-
-> For a universal release the x86_64 Homebrew prefix (`/usr/local`) must
-> contain x86_64 builds of `openal-soft` and `sdl2`. The typical approach is
-> to build on an Intel Mac (which can also cross-compile to arm64), or to
-> assemble the universal binary from per-arch builds using `lipo`.
 
 Before publishing a release, complete every item in
 [MACOS-RELEASE-CHECKLIST.md](./MACOS-RELEASE-CHECKLIST.md).
@@ -297,6 +341,7 @@ Before publishing a release, complete every item in
 | `dhewm3 -h` exits non-zero | Expected — dhewm3 exits with code 1 after printing help | This is normal; check the output, not the exit code. |
 | `pak*.pk4 not found` at startup | `fs_basepath` points to wrong directory | Directory must contain `base/pak000.pk4`. Run `./scripts/macos-run.sh /correct/path/` |
 | Game crashes immediately on arm64 | OpenAL Soft from Apple's SDK (not Homebrew) linked in | `brew install openal-soft`; confirm with `otool -L build/dhewm3 \| grep openal` that it links Homebrew's copy, not `/System/Library/…`. |
-| Universal build missing x86_64 slice | x86_64 Homebrew deps absent | Install x86_64 Homebrew at `/usr/local` and ensure `openal-soft` and `sdl2` are present there. |
+| Universal build missing x86_64 slice | x86_64 Homebrew deps absent | Use the `release.yml` CI workflow which assembles universal binaries via `lipo` from separate per-arch builds — no dual-Homebrew setup required. |
 | Folder-picker dialog appears every launch | Saved path (`~/Library/Application Support/dhewm3/gamepath`) missing or stale | Pick the correct folder in the dialog, or: `echo /path/to/doom3 > ~/Library/Application\ Support/dhewm3/gamepath` |
-| Gatekeeper blocks the app ("unidentified developer") | Unsigned build | Right-click → Open → Open (once); or use a signed release DMG. |
+| Gatekeeper blocks the app (*"dhewm3 cannot be opened because it is from an unidentified developer"*) | Unsigned build | **Quick fix:** right-click (or Control-click) `dhewm3` in Applications → **Open** → **Open** (once only). **Permanent fix:** use the `dhewm3-macos-universal-signed.dmg` from the Releases page, which is signed + notarized and passes Gatekeeper without any workaround. |
+| `dylibbundler` warning during bundle step | `dylibbundler` not installed | `brew install dylibbundler`; without it the .app only runs on Macs with matching Homebrew libraries installed. |

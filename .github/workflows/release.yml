@@ -1,0 +1,290 @@
+name: Release
+
+# Triggered on version tags (e.g. v1.5.3).
+# Builds arm64 and x86_64 DMGs, then assembles a universal DMG via lipo
+# and publishes all three to a GitHub Release.
+#
+# Optional: if signing secrets are configured, a signed+notarized universal
+# DMG is also produced.  See docs/SIGNING.md for required secrets.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── Per-arch builds ──────────────────────────────────────────────────────────
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: arm64 (Apple Silicon)
+            runner: macos-14
+            preset: macos-arm64
+            arch: arm64
+          - name: x86_64 (Intel)
+            runner: macos-13
+            preset: macos-intel
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install cmake openal-soft sdl2 curl dylibbundler
+
+      - name: Configure
+        run: cmake -S neo --preset ${{ matrix.preset }} -B build
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Verify binary
+        run: |
+          file build/dhewm3
+          otool -L build/dhewm3 | grep -E 'openal|SDL2|curl' || true
+          ./build/dhewm3 -h > smoke.log 2>&1 || true
+          head -n 20 smoke.log
+
+      - name: Assemble .app and DMG
+        run: |
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          ./scripts/macos-bundle.sh build
+
+      - name: Rename DMG with arch suffix
+        run: mv dhewm3-${{ matrix.arch }}.dmg dhewm3-macos-${{ matrix.arch }}.dmg
+
+      # Upload the bare engine binary + dylibs so the universal job can lipo them.
+      - name: Upload engine binary (for universal assembly)
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.arch }}
+          path: |
+            build/dhewm3
+            build/*.dylib
+          if-no-files-found: error
+
+      - name: Upload per-arch DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dhewm3-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  # ── Universal binary via lipo ────────────────────────────────────────────────
+  universal:
+    name: Universal DMG (lipo)
+    runs-on: macos-14
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install dylibbundler
+
+      - name: Download arm64 engine
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-arm64
+          path: engine-arm64
+
+      - name: Download x86_64 engine
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-x86_64
+          path: engine-x86_64
+
+      - name: Assemble universal binary with lipo
+        run: |
+          mkdir -p build-universal
+          lipo -create engine-arm64/dhewm3 engine-x86_64/dhewm3 \
+               -output build-universal/dhewm3
+          chmod +x build-universal/dhewm3
+
+          # Merge game dylibs (base.dylib, d3xp.dylib, …) if both arches built them
+          for LIB in engine-arm64/*.dylib; do
+            LIBNAME="$(basename "$LIB")"
+            if [[ -f "engine-x86_64/$LIBNAME" ]]; then
+              lipo -create "engine-arm64/$LIBNAME" "engine-x86_64/$LIBNAME" \
+                   -output "build-universal/$LIBNAME"
+            else
+              cp "$LIB" "build-universal/$LIBNAME"
+            fi
+          done
+
+          echo "==> Universal binary:"
+          file build-universal/dhewm3
+          lipo -info build-universal/dhewm3
+
+      - name: Assemble universal .app and DMG
+        run: |
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          ./scripts/macos-bundle.sh build-universal
+          # macos-bundle.sh names the DMG after the detected arch; rename it.
+          mv dhewm3-universal.dmg dhewm3-macos-universal.dmg 2>/dev/null || \
+            mv dhewm3-*.dmg dhewm3-macos-universal.dmg
+
+      - name: Upload unsigned universal DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-universal
+          path: dhewm3-macos-universal.dmg
+          if-no-files-found: error
+
+      # ── Optional signing + notarization ──────────────────────────────────────
+      # Runs only when signing secrets are configured in the repository.
+      # See docs/SIGNING.md for setup instructions.
+      - name: Check for signing secrets
+        id: check-secrets
+        run: |
+          if [[ -n "${{ secrets.MACOS_CERTIFICATE }}" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets not configured — skipping code signing."
+            echo "See docs/SIGNING.md to set them up."
+          fi
+
+      - name: Import signing certificate
+        if: steps.check-secrets.outputs.available == 'true'
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+        run: |
+          echo "$CERTIFICATE_BASE64" | base64 --decode > /tmp/certificate.p12
+          security create-keychain -p "$KEYCHAIN_PWD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PWD" build.keychain
+          security import /tmp/certificate.p12 -k build.keychain \
+            -P "$CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PWD" build.keychain
+          rm /tmp/certificate.p12
+
+      - name: Sign .app bundle
+        if: steps.check-secrets.outputs.available == 'true'
+        env:
+          TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+        run: |
+          codesign --deep --force --options runtime \
+            --sign "Developer ID Application: $TEAM_ID" \
+            dhewm3.app
+
+      - name: Repackage signed DMG
+        if: steps.check-secrets.outputs.available == 'true'
+        run: |
+          STAGING="$(mktemp -d)"
+          cp -R dhewm3.app "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create \
+            -volname "dhewm3" \
+            -srcfolder "$STAGING" \
+            -ov \
+            -format UDZO \
+            dhewm3-macos-universal-signed.dmg
+          rm -rf "$STAGING"
+
+      - name: Notarize DMG
+        if: steps.check-secrets.outputs.available == 'true'
+        env:
+          APPLE_ID: ${{ secrets.NOTARIZE_APPLE_ID }}
+          TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
+          APP_PWD: ${{ secrets.NOTARIZE_PASSWORD }}
+        run: |
+          xcrun notarytool submit dhewm3-macos-universal-signed.dmg \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PWD" \
+            --wait
+
+      - name: Staple notarization ticket
+        if: steps.check-secrets.outputs.available == 'true'
+        run: xcrun stapler staple dhewm3-macos-universal-signed.dmg
+
+      - name: Upload signed universal DMG
+        if: steps.check-secrets.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-universal-signed
+          path: dhewm3-macos-universal-signed.dmg
+          if-no-files-found: error
+
+  # ── Publish GitHub Release ───────────────────────────────────────────────────
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, universal]
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh release-assets/
+
+      - name: Create GitHub Release and upload DMGs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.ref_name }}"
+
+          # Build the release notes body
+          NOTES="## dhewm3 macOS — ${TAG}
+
+          ### Downloads
+
+          | File | Description |
+          |------|-------------|
+          | \`dhewm3-macos-arm64.dmg\` | Apple Silicon (M1/M2/M3) |
+          | \`dhewm3-macos-x86_64.dmg\` | Intel Mac |
+          | \`dhewm3-macos-universal.dmg\` | Both architectures (unsigned) |
+          | \`dhewm3-macos-universal-signed.dmg\` | Both architectures, signed + notarized *(if secrets configured)* |
+
+          ### First-time macOS security note
+
+          > **If macOS says \"dhewm3 cannot be opened because it is from an unidentified developer\":**
+          > Right-click (or Control-click) \`dhewm3\` in your Applications folder, choose **Open**, then click **Open** in the dialog.
+          > You only need to do this once.
+          > Use the signed DMG to avoid this entirely.
+
+          ### Requirements
+
+          - macOS 11.0+ (Apple Silicon) or macOS 10.15+ (Intel)
+          - Doom 3 game data (version 1.3.1) — available on [Steam](https://store.steampowered.com/app/208200/DOOM_3/) or GOG
+
+          ### How to install
+
+          1. Download the DMG for your Mac.
+          2. Open the DMG and drag \`dhewm3\` to your Applications folder.
+          3. Launch \`dhewm3\` — a folder-picker appears on first launch. Select your Doom 3 installation folder.
+
+          See [docs/MACOS.md](https://github.com/${{ github.repository }}/blob/main/docs/MACOS.md) for full details."
+
+          # Create release (draft=false, prerelease based on tag containing -)
+          PRERELEASE_FLAG=""
+          if [[ "$TAG" == *"-"* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$TAG" \
+            release-assets/*.dmg \
+            --title "dhewm3 ${TAG}" \
+            --notes "$NOTES" \
+            $PRERELEASE_FLAG

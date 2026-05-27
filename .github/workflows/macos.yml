@@ -58,7 +58,7 @@ jobs:
       - name: Install dependencies (Homebrew)
         run: |
           brew update
-          brew install cmake openal-soft sdl2 curl
+          brew install cmake openal-soft sdl2 curl dylibbundler
 
       - name: Configure (CMake preset)
         run: cmake -S neo --preset ${{ matrix.preset }} -B build
@@ -105,7 +105,7 @@ jobs:
       - name: Install dependencies (Homebrew)
         run: |
           brew update
-          brew install cmake openal-soft sdl2 curl
+          brew install cmake openal-soft sdl2 curl dylibbundler
 
       - name: Build universal binary
         run: |
