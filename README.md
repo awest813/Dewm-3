@@ -54,15 +54,22 @@ See [Changelog.md](./Changelog.md) for a full upstream changelog.
 1. **Get Doom 3 game data** — buy *DOOM 3* on [Steam](https://store.steampowered.com/app/208200/DOOM_3/)
    or GOG. The Steam version is already patched to 1.3.1.
 
-2. **Download a pre-built DMG** from the [Actions tab](../../actions/workflows/macos.yml) →
-   latest passing run → download `dhewm3-macos-arm64` (Apple Silicon) or
-   `dhewm3-macos-x86_64` (Intel).
+2. **Download a pre-built DMG** from the [Releases page](../../releases/latest):
+   - `dhewm3-macos-arm64.dmg` — Apple Silicon (M1/M2/M3)
+   - `dhewm3-macos-x86_64.dmg` — Intel
+   - `dhewm3-macos-universal-signed.dmg` — both architectures, signed (no security prompt)
 
 3. **Open the DMG** and drag `dhewm3` to your Applications folder.
 
 4. **Launch `dhewm3`** — a folder-picker appears on first launch. Select your Doom 3
    installation folder (the one that contains `base/`). The path is saved; future launches
    go straight to the game.
+
+> **First-time macOS security note**  
+> If macOS says *"dhewm3 cannot be opened because it is from an unidentified developer"*,
+> right-click (or Control-click) `dhewm3` in Applications, choose **Open**, then click
+> **Open** in the dialog. You only need to do this once. Use the signed DMG to avoid this
+> entirely — see [docs/SIGNING.md](./docs/SIGNING.md) for how to enable signing.
 
 ## Building from source (macOS)
 
