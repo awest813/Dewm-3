@@ -63,8 +63,9 @@ runs its `universal` job. Near the end of that job:
 
 1. A step checks whether `MACOS_CERTIFICATE` is non-empty.
 2. If it is, the certificate is imported into a temporary keychain, the `.app`
-   is signed with `codesign --deep --force --options runtime`, the DMG is
-   repackaged, notarized with `xcrun notarytool`, and the ticket is stapled.
+   is signed with `codesign --deep --force --options runtime` using the
+   `Developer ID Application` identity that matches `NOTARIZE_TEAM_ID`, the DMG
+   is repackaged, notarized with `xcrun notarytool`, and the ticket is stapled.
 3. The signed `dhewm3-macos-universal-signed.dmg` is uploaded as a release
    artifact and attached to the GitHub Release alongside the unsigned DMGs.
 
