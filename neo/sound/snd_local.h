@@ -36,9 +36,23 @@ If you have questions concerning this license or the applicable additional terms
 #define AL_LIBTYPE_STATIC
 #endif
 
-#include <AL/al.h>
-#include <AL/alc.h>
-#include <AL/alext.h>
+#if defined(__has_include)
+	#if __has_include(<AL/al.h>)
+		#include <AL/al.h>
+		#include <AL/alc.h>
+		#include <AL/alext.h>
+	#elif __has_include(<OpenAL/al.h>)
+		#include <OpenAL/al.h>
+		#include <OpenAL/alc.h>
+		#include <OpenAL/alext.h>
+	#else
+		#error "OpenAL headers not found"
+	#endif
+#else
+	#include <AL/al.h>
+	#include <AL/alc.h>
+	#include <AL/alext.h>
+#endif
 
 // DG: make this code build with older OpenAL headers that don't know about ALC_SOFT_HRTF
 //     which provides LPALCRESETDEVICESOFT for idSoundSystemLocal::alcResetDeviceSOFT()
