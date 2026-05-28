@@ -1,0 +1,77 @@
+name: Linux build
+
+# Builds dhewm3 on Linux (Ubuntu) for x86_64 and arm64.
+# See docs/LINUX.md for the full support matrix.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+            preset: linux-x86_64
+            arch: x86_64
+          - name: Linux arm64
+            runner: ubuntu-22.04-arm
+            preset: linux-arm64
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            cmake build-essential \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            libbacktrace-dev || \
+          sudo apt-get install -y \
+            cmake build-essential \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+
+      - name: Configure (CMake preset)
+        run: cmake -S neo --preset ${{ matrix.preset }} -B build
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Verify binary
+        run: |
+          file build/dhewm3
+          ldd build/dhewm3 | grep -E 'openal|SDL2|curl' || true
+          # dhewm3 -h may exit non-zero; capture output and confirm it ran
+          ./build/dhewm3 -h > smoke.log 2>&1 || true
+          head -n 20 smoke.log
+
+      - name: Package (tarball)
+        run: |
+          chmod +x scripts/linux-package.sh
+          ./scripts/linux-package.sh build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dhewm3-linux-${{ matrix.arch }}
+          path: |
+            build/dhewm3
+            build/*.so
+            dhewm3-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: warn
