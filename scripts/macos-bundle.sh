@@ -43,6 +43,10 @@ fi
 echo "==> Assembling dhewm3.app (arch: $ARCH_SUFFIX)…"
 
 # ── Build .app directory tree ─────────────────────────────────────────────────
+if [[ -z "$APP_DIR" || "$APP_DIR" == "/" ]]; then
+  echo "Error: APP_DIR is empty or root — refusing to rm -rf."
+  exit 1
+fi
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
@@ -114,6 +118,7 @@ echo "==> Creating $DMG_NAME…"
 
 # Temporary staging folder for the DMG contents
 STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
 cp -R "$APP_DIR" "$STAGING/"
 # Symlink /Applications so users can drag-and-drop
 ln -s /Applications "$STAGING/Applications"
@@ -124,8 +129,6 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$DMG_PATH"
-
-rm -rf "$STAGING"
 
 echo ""
 echo "==> Done."

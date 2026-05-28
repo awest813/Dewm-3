@@ -190,7 +190,7 @@ for detailed Windows build instructions.
 
 ## Back End Rendering of Stencil Shadows
 
-The Doom 3 GPL source code release **did** not include functionality enabling rendering of
+The Doom 3 GPL source code release did **not** include functionality enabling rendering of
 stencil shadows via the "depth fail" method (commonly known as "Carmack's Reverse").  
 It has been restored in dhewm3 1.5.1 after Creative Labs'
 [patent](https://patents.google.com/patent/US6384822B1/en) finally expired.

@@ -53,7 +53,7 @@ jobs:
             primary: false
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install dependencies (Homebrew)
         run: |
@@ -80,7 +80,7 @@ jobs:
           ./scripts/macos-bundle.sh build
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dhewm3-macos-${{ matrix.arch }}
           path: |
@@ -100,7 +100,7 @@ jobs:
     needs: build
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install dependencies (Homebrew)
         run: |
@@ -123,22 +123,26 @@ jobs:
           CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
         run: |
-          echo "$CERTIFICATE_BASE64" | base64 --decode > /tmp/certificate.p12
-          security create-keychain -p "$KEYCHAIN_PWD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PWD" build.keychain
-          security import /tmp/certificate.p12 -k build.keychain \
+          CERT_FILE="$(mktemp /tmp/certificate.XXXXXX.p12)"
+          chmod 600 "$CERT_FILE"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERT_FILE"
+          KEYCHAIN_NAME="build-${GITHUB_RUN_ID}.keychain"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_NAME"
+          security default-keychain -s "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_NAME"
+          security import "$CERT_FILE" -k "$KEYCHAIN_NAME" \
             -P "$CERTIFICATE_PWD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PWD" build.keychain
-          rm /tmp/certificate.p12
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_NAME"
+          rm -f "$CERT_FILE"
+          echo "KEYCHAIN_NAME=$KEYCHAIN_NAME" >> "$GITHUB_ENV"
 
       - name: Resolve Developer ID identity
         id: resolve-identity
         env:
           TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
         run: |
-          IDENTITY="$(security find-identity -v -p codesigning build.keychain \
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" \
             | sed -n 's/.*"\(Developer ID Application: .*\)".*/\1/p' \
             | grep "($TEAM_ID)" \
             | head -n 1 || true)"
@@ -146,7 +150,7 @@ jobs:
           if [[ -z "$IDENTITY" ]]; then
             echo "No Developer ID Application identity found for Team ID '$TEAM_ID'."
             echo "Available code-signing identities:"
-            security find-identity -v -p codesigning build.keychain || true
+            security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
             exit 1
           fi
 
@@ -189,7 +193,7 @@ jobs:
         run: xcrun stapler staple dhewm3-universal.dmg
 
       - name: Upload signed release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dhewm3-macos-universal-signed
           path: dhewm3-universal.dmg
