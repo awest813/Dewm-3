@@ -9,8 +9,6 @@
 #define BUILD_LIBDIR			"@libdir@"
 #define BUILD_DATADIR			"@datadir@"
 
-#cmakedefine HAVE_JPEG_MEM_SRC
-
 #cmakedefine ID_ENABLE_CURL
 
 #endif

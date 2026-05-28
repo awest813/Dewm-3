@@ -28,9 +28,18 @@ if(APPLE)
 	endif()
 
 	# Help find_package() find Homebrew-installed dependencies (openal-soft, sdl2, curl).
-	# Apple Silicon Homebrew lives in /opt/homebrew, Intel Homebrew in /usr/local.
+	# Detect prefix dynamically via `brew --prefix`, falling back to known locations.
 	if(NOT DEFINED HOMEBREW_PREFIX)
-		if(EXISTS "/opt/homebrew")
+		execute_process(
+			COMMAND brew --prefix
+			OUTPUT_VARIABLE _brew_prefix
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			ERROR_QUIET
+			RESULT_VARIABLE _brew_result
+		)
+		if(_brew_result EQUAL 0 AND EXISTS "${_brew_prefix}")
+			set(HOMEBREW_PREFIX "${_brew_prefix}")
+		elseif(EXISTS "/opt/homebrew")
 			set(HOMEBREW_PREFIX "/opt/homebrew")
 		elseif(EXISTS "/usr/local/Homebrew")
 			set(HOMEBREW_PREFIX "/usr/local")
@@ -1032,6 +1041,13 @@ set(src_debuggerServer
 	tools/debugger/debugger.cpp
 )
 
+set(src_stub_openal		sys/stub/openal_stub.cpp)
+set(src_stub_gl			sys/stub/stub_gl.cpp)
+
+set(src_tools
+	tools/guied/GEWindowWrapper_stub.cpp
+)
+
 set(src_core
 	${src_renderer}
 	${src_framework}
@@ -1043,14 +1059,6 @@ set(src_core
 	${src_snd}
 	${src_ui}
 	${src_tools}
-)
-
-set(src_stub_openal		sys/stub/openal_stub.cpp)
-set(src_stub_gl			sys/stub/stub_gl.cpp)
-
-
-set(src_tools
-	tools/guied/GEWindowWrapper_stub.cpp
 )
 
 # TODO: add_globbed_headers(src_tools "tools/guied")

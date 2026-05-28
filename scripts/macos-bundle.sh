@@ -43,12 +43,39 @@ fi
 echo "==> Assembling dhewm3.app (arch: $ARCH_SUFFIX)…"
 
 # ── Build .app directory tree ─────────────────────────────────────────────────
+if [[ -z "$APP_DIR" || "$APP_DIR" == "/" ]]; then
+  echo "Error: APP_DIR is empty or root — refusing to rm -rf."
+  exit 1
+fi
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-# Info.plist
+# Info.plist — inject version from git tag if available
 cp "$PLIST_SRC" "$APP_DIR/Contents/Info.plist"
+GIT_VERSION="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
+GIT_VERSION="${GIT_VERSION#v}"  # strip leading 'v' if present
+if [[ -n "$GIT_VERSION" ]]; then
+  sed -i.bak \
+    -e "s|<string>1.5.4</string><!-- CFBundleVersion -->|<string>${GIT_VERSION}</string>|" \
+    "$APP_DIR/Contents/Info.plist" 2>/dev/null || true
+  # Also replace the two version strings using a more targeted approach
+  python3 -c "
+import re, sys
+with open('$APP_DIR/Contents/Info.plist', 'r') as f:
+    content = f.read()
+content = re.sub(
+    r'(<key>CFBundleVersion</key>\s*<string>)[^<]*(</string>)',
+    r'\g<1>${GIT_VERSION}\g<2>', content)
+content = re.sub(
+    r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]*(</string>)',
+    r'\g<1>${GIT_VERSION}\g<2>', content)
+with open('$APP_DIR/Contents/Info.plist', 'w') as f:
+    f.write(content)
+" 2>/dev/null || true
+  rm -f "$APP_DIR/Contents/Info.plist.bak"
+  echo "    Version set to: $GIT_VERSION"
+fi
 
 # dhewm3 engine binary (renamed so the launcher can call it)
 cp "$BINARY" "$APP_DIR/Contents/MacOS/dhewm3"
@@ -114,6 +141,7 @@ echo "==> Creating $DMG_NAME…"
 
 # Temporary staging folder for the DMG contents
 STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
 cp -R "$APP_DIR" "$STAGING/"
 # Symlink /Applications so users can drag-and-drop
 ln -s /Applications "$STAGING/Applications"
@@ -124,8 +152,6 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$DMG_PATH"
-
-rm -rf "$STAGING"
 
 echo ""
 echo "==> Done."

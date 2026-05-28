@@ -31,7 +31,7 @@ jobs:
             arch: x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install dependencies
         run: |
@@ -61,7 +61,7 @@ jobs:
 
       # Upload the bare engine binary + dylibs so the universal job can lipo them.
       - name: Upload engine binary (for universal assembly)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: engine-${{ matrix.arch }}
           path: |
@@ -70,7 +70,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload per-arch DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dmg-${{ matrix.arch }}
           path: dhewm3-macos-${{ matrix.arch }}.dmg
@@ -83,7 +83,7 @@ jobs:
     needs: build
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install dependencies
         run: |
@@ -91,13 +91,13 @@ jobs:
           brew install dylibbundler
 
       - name: Download arm64 engine
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: engine-arm64
           path: engine-arm64
 
       - name: Download x86_64 engine
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: engine-x86_64
           path: engine-x86_64
@@ -141,7 +141,7 @@ jobs:
             mv dhewm3-*.dmg dhewm3-macos-universal.dmg
 
       - name: Upload unsigned universal DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dmg-universal
           path: dhewm3-macos-universal.dmg
@@ -168,15 +168,19 @@ jobs:
           CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
         run: |
-          echo "$CERTIFICATE_BASE64" | base64 --decode > /tmp/certificate.p12
-          security create-keychain -p "$KEYCHAIN_PWD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PWD" build.keychain
-          security import /tmp/certificate.p12 -k build.keychain \
+          CERT_FILE="$(mktemp /tmp/certificate.XXXXXX.p12)"
+          chmod 600 "$CERT_FILE"
+          echo "$CERTIFICATE_BASE64" | base64 --decode > "$CERT_FILE"
+          KEYCHAIN_NAME="build-${GITHUB_RUN_ID}.keychain"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_NAME"
+          security default-keychain -s "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_NAME"
+          security import "$CERT_FILE" -k "$KEYCHAIN_NAME" \
             -P "$CERTIFICATE_PWD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PWD" build.keychain
-          rm /tmp/certificate.p12
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_NAME"
+          rm -f "$CERT_FILE"
+          echo "KEYCHAIN_NAME=$KEYCHAIN_NAME" >> "$GITHUB_ENV"
 
       - name: Resolve Developer ID identity
         if: steps.check-secrets.outputs.available == 'true'
@@ -184,7 +188,7 @@ jobs:
         env:
           TEAM_ID: ${{ secrets.NOTARIZE_TEAM_ID }}
         run: |
-          IDENTITY="$(security find-identity -v -p codesigning build.keychain \
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" \
             | sed -n 's/.*"\(Developer ID Application: .*\)".*/\1/p' \
             | grep "($TEAM_ID)" \
             | head -n 1 || true)"
@@ -192,7 +196,7 @@ jobs:
           if [[ -z "$IDENTITY" ]]; then
             echo "No Developer ID Application identity found for Team ID '$TEAM_ID'."
             echo "Available code-signing identities:"
-            security find-identity -v -p codesigning build.keychain || true
+            security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
             exit 1
           fi
 
@@ -239,27 +243,87 @@ jobs:
 
       - name: Upload signed universal DMG
         if: steps.check-secrets.outputs.available == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dmg-universal-signed
           path: dhewm3-macos-universal-signed.dmg
           if-no-files-found: error
 
   # ── Publish GitHub Release ───────────────────────────────────────────────────
+  # ── Linux builds ────────────────────────────────────────────────────────────
+  linux:
+    name: Build Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            preset: linux-release
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            preset: linux-release
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y \
+            cmake build-essential \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev \
+            libbacktrace-dev || \
+          sudo apt-get install -y \
+            cmake build-essential \
+            libsdl2-dev libopenal-dev libcurl4-openssl-dev
+
+      - name: Configure
+        run: cmake -S neo --preset ${{ matrix.preset }} -B build-release
+
+      - name: Build
+        run: cmake --build build-release --parallel
+
+      - name: Package tarball
+        run: |
+          chmod +x scripts/linux-package.sh
+          ./scripts/linux-package.sh build-release
+
+      - name: Rename tarball with consistent name
+        run: mv dhewm3-linux-*.tar.gz dhewm3-linux-${{ matrix.arch }}.tar.gz
+
+      - name: Upload Linux tarball
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tarball-${{ matrix.arch }}
+          path: dhewm3-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  # ── Publish GitHub Release ───────────────────────────────────────────────────
   publish:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build, universal]
+    needs: [build, universal, linux]
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download all DMG artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: dmg-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download all Linux tarball artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: tarball-*
           path: release-assets
           merge-multiple: true
 
@@ -273,16 +337,23 @@ jobs:
           TAG="${{ github.ref_name }}"
 
           # Build the release notes body
-          NOTES="## dhewm3 macOS — ${TAG}
+          NOTES="## dhewm3 — ${TAG}
 
           ### Downloads
 
+          #### macOS
           | File | Description |
           |------|-------------|
           | \`dhewm3-macos-arm64.dmg\` | Apple Silicon (M1/M2/M3) |
           | \`dhewm3-macos-x86_64.dmg\` | Intel Mac |
           | \`dhewm3-macos-universal.dmg\` | Both architectures (unsigned) |
           | \`dhewm3-macos-universal-signed.dmg\` | Both architectures, signed + notarized *(if secrets configured)* |
+
+          #### Linux
+          | File | Description |
+          |------|-------------|
+          | \`dhewm3-linux-x86_64.tar.gz\` | 64-bit Intel/AMD |
+          | \`dhewm3-linux-arm64.tar.gz\` | 64-bit ARM (aarch64) |
 
           ### First-time macOS security note
 
@@ -312,6 +383,7 @@ jobs:
 
           gh release create "$TAG" \
             release-assets/*.dmg \
+            release-assets/*.tar.gz \
             --title "dhewm3 ${TAG}" \
             --notes "$NOTES" \
             $PRERELEASE_FLAG

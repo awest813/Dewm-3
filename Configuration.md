@@ -18,7 +18,7 @@ useful commandline arguments, for example how to tell dhewm3 where the game data
 
 When built with [Dear ImGui](https://github.com/ocornut/imgui) integration (which is the default
 when using SDL2), dhewm3 has an advanced settings menu with many settings that the main menu doesn't
-offer, including a *Control BIndings* menu that supports as many keys per command as you want and is
+offer, including a *Control Bindings* menu that supports as many keys per command as you want and is
 fully navigable with keyboard or gamepad (or mouse, of course).
 
 Unless you have already bound your `F10` key to something else, it will open this menu.  
@@ -27,13 +27,13 @@ or open the dhewm3 settings menu by entering `dhewm3Settings` in the console - w
 you can also bind opening it to any other key.
 
 *By the way:* An especially nice feature of the dhewm3 Settings Menu is that you can **open it while
-your're in the game**. The game is be paused (if you're playing Single Player) but is still on the
+you're in the game**. The game will be paused (if you're playing Single Player) but is still on the
 screen, so you **when you modify *Video Options* like *brightness* you can see the effect in realtime**!
 Is this cool or what? B-)
 
 Even though *using ImGui menus with a **gamepad*** is quite intuitive (basically use the DPad to navigate
 and `A` to select and `B` to cancel; in the *Control Bindings* menu read the *Usage Help* section
-for for things specific to that menu), the sheets on https://www.dearimgui.com/controls_sheets/
+for things specific to that menu), the sheets on https://www.dearimgui.com/controls_sheets/
 might be useful for advanced tricks (note however that not all features are available on PC, it seems like
 there's no on-screen keyboard and I'm not sure whether controlling the mouse cursor with the PS4/5
 touchpad works).

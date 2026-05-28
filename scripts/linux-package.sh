@@ -43,6 +43,7 @@ echo "==> Packaging dhewm3 (arch: $ARCH)…"
 
 # ── Staging directory ─────────────────────────────────────────────────────────
 STAGING="$(mktemp -d)"
+trap 'rm -rf "$STAGING"' EXIT
 STAGE_DIR="$STAGING/dhewm3"
 mkdir -p "$STAGE_DIR"
 
@@ -92,7 +93,6 @@ TARBALL_PATH="$REPO_ROOT/$TARBALL_NAME"
 
 echo "==> Creating $TARBALL_NAME…"
 tar -czf "$TARBALL_PATH" -C "$STAGING" dhewm3
-rm -rf "$STAGING"
 
 echo ""
 echo "==> Done."
@@ -103,7 +103,8 @@ echo ""
 if command -v appimagetool &>/dev/null; then
   echo "==> appimagetool found — building AppImage…"
 
-  APPDIR="$(mktemp -d)/dhewm3.AppDir"
+  APPIMAGE_TMPDIR="$(mktemp -d)"
+  APPDIR="$APPIMAGE_TMPDIR/dhewm3.AppDir"
   mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib"
 
   cp "$BINARY" "$APPDIR/usr/bin/dhewm3"
@@ -138,7 +139,7 @@ DESKTOP
   APPIMAGE_PATH="$REPO_ROOT/dhewm3-linux-${ARCH}.AppImage"
   ARCH="$ARCH" appimagetool "$APPDIR" "$APPIMAGE_PATH"
   chmod +x "$APPIMAGE_PATH"
-  rm -rf "$(dirname "$APPDIR")"
+  rm -rf "$APPIMAGE_TMPDIR"
 
   echo "    AppImage: $APPIMAGE_PATH"
 else
