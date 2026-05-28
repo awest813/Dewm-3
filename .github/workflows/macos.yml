@@ -68,10 +68,12 @@ jobs:
 
       - name: Verify binary
         run: |
-          file build/dhewm3
-          otool -L build/dhewm3 | grep -E 'openal|SDL2|curl' || true
+          # cmake MACOSX_BUNDLE places the binary inside an .app bundle
+          BINARY="build/dhewm3.app/Contents/MacOS/dhewm3"
+          file "$BINARY"
+          otool -L "$BINARY" | grep -E 'openal|SDL2|curl' || true
           # dhewm3 -h may exit non-zero; capture output and confirm it ran
-          ./build/dhewm3 -h > smoke.log 2>&1 || true
+          "$BINARY" -h > smoke.log 2>&1 || true
           head -n 20 smoke.log
 
       - name: Assemble .app bundle and DMG
@@ -84,7 +86,7 @@ jobs:
         with:
           name: dhewm3-macos-${{ matrix.arch }}
           path: |
-            build/dhewm3
+            build/dhewm3.app/
             build/*.dylib
             dhewm3.app/
             dhewm3-${{ matrix.arch }}.dmg

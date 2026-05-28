@@ -69,10 +69,16 @@ cmake --build "$BUILD_DIR" --parallel
 # ── 6. Verify ─────────────────────────────────────────────────────────────────
 echo ""
 echo "==> Verifying binary…"
-file "$BUILD_DIR/dhewm3"
+# cmake MACOSX_BUNDLE places the binary inside an .app bundle
+if [[ -x "$BUILD_DIR/dhewm3.app/Contents/MacOS/dhewm3" ]]; then
+  VERIFY_BINARY="$BUILD_DIR/dhewm3.app/Contents/MacOS/dhewm3"
+else
+  VERIFY_BINARY="$BUILD_DIR/dhewm3"
+fi
+file "$VERIFY_BINARY"
 
 echo ""
-echo "Build successful!  Binary: $BUILD_DIR/dhewm3"
+echo "Build successful!  Binary: $VERIFY_BINARY"
 echo ""
 
 # ── 7. Assemble .app bundle and DMG ───────────────────────────────────────────
