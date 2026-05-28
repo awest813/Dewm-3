@@ -1,12 +1,12 @@
 # ABOUT
 
-This is a macOS-focused fork of [dhewm3](https://github.com/dhewm/dhewm3), a _Doom 3_ GPL
-source port. The primary goal of this fork is to provide a stable, well-maintained build of
-dhewm3 for current macOS, with **Apple Silicon (arm64) as the primary target** and Intel
-(x86_64) as a secondary, best-effort target.
+This is a fork of [dhewm3](https://github.com/dhewm/dhewm3), a _Doom 3_ GPL source port,
+focused on delivering easy, well-maintained builds for **macOS** and **Linux**. macOS with
+**Apple Silicon (arm64) is the primary target**; Intel (x86_64) macOS and Linux x86_64/arm64
+are fully supported secondary targets.
 
-Upstream dhewm3 also supports Windows, Linux, and FreeBSD. This fork does not break any of
-that, but macOS is the focus of active development and testing here.
+Upstream dhewm3 also supports Windows and FreeBSD. This fork does not break any of that,
+but macOS and Linux are the focus of active development and testing here.
 
 **Upstream dhewm3 homepage:** https://dhewm3.org  
 **Upstream project:** https://github.com/dhewm/dhewm3  
@@ -28,11 +28,18 @@ On top of everything in upstream dhewm3, this fork ships:
 - **`scripts/macos-firstrun.sh`** — the app's `CFBundleExecutable`; on first launch it shows a
   folder-picker (via `osascript`) and saves the chosen Doom 3 data path to
   `~/Library/Application Support/dhewm3/gamepath` for all future launches.
-- **Named CMake presets** (`macos-arm64`, `macos-intel`, `macos-universal`) in
-  `neo/CMakePresets.json`.
-- **GitHub Actions CI** that builds arm64 and x86_64 DMG artifacts on every push/PR.
+- **Named CMake presets** (`macos-arm64`, `macos-intel`, `macos-universal`, `linux-x86_64`,
+  `linux-arm64`, `linux-release`) in `neo/CMakePresets.json`.
+- **GitHub Actions CI** that builds macOS DMG and Linux tarball artifacts on every push/PR.
 - **`docs/MACOS.md`** — comprehensive macOS documentation covering the support matrix,
   game-data setup, CMake presets, CI, signing, release procedure, and troubleshooting.
+- **`scripts/linux-setup.sh`** — one-command Linux build: detects your distro's package
+  manager, installs dependencies, configures with a named preset, compiles, and packages.
+- **`scripts/linux-run.sh`** — launcher that auto-discovers Steam (including Flatpak Steam),
+  GOG, and common install locations; saves the path for future launches.
+- **`scripts/linux-package.sh`** — creates a portable tarball (and optionally an AppImage).
+- **`docs/LINUX.md`** — comprehensive Linux documentation covering the support matrix,
+  game-data discovery, CMake presets, AppImage packaging, CI, and troubleshooting.
 
 Inherited from upstream dhewm3:
 
@@ -100,6 +107,38 @@ See [docs/MACOS.md](./docs/MACOS.md) for the full support matrix, CMake preset r
 CI details, signing/notarization, troubleshooting, and the release maintainer guide.
 
 
+# PLAYING ON LINUX
+
+## Fastest path (no build required)
+
+1. **Get Doom 3 game data** — buy *DOOM 3* on [Steam](https://store.steampowered.com/app/208200/DOOM_3/)
+   or GOG. The Steam version is already patched to 1.3.1.
+
+2. **Download a pre-built tarball** from the [Releases page](../../releases/latest):
+   - `dhewm3-linux-x86_64.tar.gz` — 64-bit Intel/AMD
+   - `dhewm3-linux-arm64.tar.gz` — 64-bit ARM (Raspberry Pi 4/5, etc.)
+
+3. **Extract and run:**
+   ```sh
+   tar -xzf dhewm3-linux-x86_64.tar.gz
+   cd dhewm3
+   ./dhewm3 +set fs_basepath /path/to/doom3/
+   ```
+
+## Building from source (Linux)
+
+Install dependencies and build with the one-step setup script:
+
+```sh
+./scripts/linux-setup.sh           # auto-detects distro and CPU
+./scripts/linux-run.sh             # auto-discovers Steam / GOG game data
+./scripts/linux-run.sh /path/to/doom3/   # or supply path explicitly
+```
+
+See [docs/LINUX.md](./docs/LINUX.md) for the full support matrix, CMake preset reference,
+packaging, AppImage creation, CI details, and troubleshooting.
+
+
 # GENERAL NOTES
 
 ## Game data and patching
@@ -120,33 +159,27 @@ https://store.steampowered.com/app/208200/DOOM_3/
 See [Configuration.md](./Configuration.md) for dhewm3-specific configuration, especially
 for using gamepads or the new settings menu.
 
-## Compiling (Linux / other UNIX-like)
+## Compiling (Linux)
 
-Required libraries (not included in the tree):
+See **[docs/LINUX.md](./docs/LINUX.md)** for the full Linux guide, including the support
+matrix, game-data auto-discovery, CMake presets, AppImage packaging, and troubleshooting.
 
-- OpenAL Soft (Creative's and Apple's system OpenAL are not supported)
-- SDL 2.0
-- libcurl (optional; needed for server downloads)
-- libbacktrace (optional; provides better crash backtraces on non-Windows)
-
-Install these via your OS package manager (apt, dnf, Homebrew, BSD ports, etc.), then:
+### Quick start (Ubuntu / Debian)
 
 ```sh
-mkdir build && cd build
-cmake ../neo/
-make -j$(nproc)
-./dhewm3 +set fs_basepath /path/to/your/doom3/
+sudo apt install cmake build-essential libsdl2-dev libopenal-dev libcurl4-openssl-dev
+git clone https://github.com/awest813/Dewm-3.git && cd Dewm-3
+./scripts/linux-setup.sh           # auto-detects x86_64 or arm64
+./scripts/linux-run.sh             # auto-discovers Steam / GOG game data
+./scripts/linux-run.sh /path/to/doom3/   # or supply path explicitly
 ```
 
-### Ubuntu / Debian example
+Or using CMake presets directly:
 
 ```sh
-sudo apt install git cmake build-essential libsdl2-dev libopenal-dev libcurl4-openssl-dev
-git clone https://github.com/awest813/Dewm-3.git
-cd Dewm-3 && mkdir build && cd build
-cmake ../neo/
-make -j$(nproc)
-./dhewm3 +set fs_basepath /path/to/your/doom3/
+cmake -S neo --preset linux-x86_64   # or linux-arm64
+cmake --build build --parallel
+./build/dhewm3 +set fs_basepath /path/to/doom3/
 ```
 
 ## Compiling (Windows)
