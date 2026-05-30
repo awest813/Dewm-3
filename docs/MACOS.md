@@ -301,14 +301,14 @@ Build each architecture separately and combine with `lipo`:
 
 ```sh
 # Build arm64
-./scripts/macos-setup.sh arm64      # produces build/dhewm3 (arm64)
-cp build/dhewm3 /tmp/dhewm3-arm64
+./scripts/macos-setup.sh arm64
+cp build/dhewm3.app/Contents/MacOS/dhewm3 /tmp/dhewm3-arm64
 
 # Build x86_64 (on an Intel Mac or Rosetta shell with x86_64 Homebrew)
-./scripts/macos-setup.sh x86_64     # produces build/dhewm3 (x86_64)
-cp build/dhewm3 /tmp/dhewm3-x86_64
+./scripts/macos-setup.sh x86_64
+cp build/dhewm3.app/Contents/MacOS/dhewm3 /tmp/dhewm3-x86_64
 
-# Combine
+# Combine into a staging dir for macos-bundle.sh
 mkdir -p build-release
 lipo -create /tmp/dhewm3-arm64 /tmp/dhewm3-x86_64 -output build-release/dhewm3
 ./scripts/macos-bundle.sh build-release
@@ -318,7 +318,7 @@ Verify the result:
 
 ```sh
 file build-release/dhewm3
-lipo -info build-release/dhewm3
+lipo -info build-release/dhewm3   # when using flat staging dir above
 # Both x86_64 and arm64 must be listed.
 
 plutil -lint dhewm3.app/Contents/Info.plist

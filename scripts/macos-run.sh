@@ -8,16 +8,19 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BINARY="$REPO_ROOT/build/dhewm3"
+# shellcheck source=macos-lib.sh
+source "$REPO_ROOT/scripts/macos-lib.sh"
 
-# Fall back to build-release/ (universal / release builds)
-if [[ ! -x "$BINARY" && -x "$REPO_ROOT/build-release/dhewm3" ]]; then
-  BINARY="$REPO_ROOT/build-release/dhewm3"
-  echo "Using release build: $BINARY"
-fi
+BINARY=""
+for BUILD_DIR in "$REPO_ROOT/build" "$REPO_ROOT/build-release"; do
+  if BINARY="$(macos_engine_binary "$BUILD_DIR")"; then
+    [[ "$BUILD_DIR" == *build-release* ]] && echo "Using release build: $BINARY"
+    break
+  fi
+done
 
-if [[ ! -x "$BINARY" ]]; then
-  echo "Error: dhewm3 binary not found at $BINARY"
+if [[ -z "$BINARY" ]]; then
+  echo "Error: dhewm3 binary not found under build/ or build-release/"
   echo "Run ./scripts/macos-setup.sh first to build it."
   exit 1
 fi
