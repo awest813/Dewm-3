@@ -3,21 +3,37 @@
 #
 # Usage:
 #   ./scripts/macos-run.sh                    # auto-discover game data
+#   ./scripts/macos-run.sh --app              # open dhewm3.app (GUI / user testing)
 #   ./scripts/macos-run.sh /path/to/doom3/    # use an explicit path
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BINARY="$REPO_ROOT/build/dhewm3"
+# shellcheck source=macos-lib.sh
+source "$REPO_ROOT/scripts/macos-lib.sh"
 
-# Fall back to build-release/ (universal / release builds)
-if [[ ! -x "$BINARY" && -x "$REPO_ROOT/build-release/dhewm3" ]]; then
-  BINARY="$REPO_ROOT/build-release/dhewm3"
-  echo "Using release build: $BINARY"
+# Launch dhewm3.app via Finder (GUI / first-run picker) — preferred for user testing.
+if [[ "${1:-}" == "--app" || "${1:-}" == "-a" ]]; then
+  APP="$REPO_ROOT/dhewm3.app"
+  if [[ ! -d "$APP" ]]; then
+    echo "Error: $APP not found."
+    echo "Run ./scripts/macos-setup.sh first, or install from a DMG."
+    exit 1
+  fi
+  echo "Opening $APP …"
+  exec open "$APP"
 fi
 
-if [[ ! -x "$BINARY" ]]; then
-  echo "Error: dhewm3 binary not found at $BINARY"
+BINARY=""
+for BUILD_DIR in "$REPO_ROOT/build" "$REPO_ROOT/build-release"; do
+  if BINARY="$(macos_engine_binary "$BUILD_DIR")"; then
+    [[ "$BUILD_DIR" == *build-release* ]] && echo "Using release build: $BINARY"
+    break
+  fi
+done
+
+if [[ -z "$BINARY" ]]; then
+  echo "Error: dhewm3 binary not found under build/ or build-release/"
   echo "Run ./scripts/macos-setup.sh first to build it."
   exit 1
 fi
@@ -82,6 +98,9 @@ Could not auto-discover Doom 3 game data.
 Supply your Doom 3 installation path directly:
   ./scripts/macos-run.sh /path/to/doom3/
 
+Or use the GUI launcher (folder picker on first run):
+  ./scripts/macos-run.sh --app
+
 The directory you point at must contain a base/ subfolder with
 pak000.pk4 through pak008.pk4 (patched to version 1.3.1).
 
@@ -89,6 +108,6 @@ Common locations:
   Steam:  ~/Library/Application Support/Steam/steamapps/common/Doom 3/
   GOG:    wherever you installed it (look for a folder named "base/")
 
-See docs/MACOS.md → "Game data" for more detail.
+See docs/MACOS-USER-TEST-M1.md for the M1 tester guide.
 EOF
 exit 1

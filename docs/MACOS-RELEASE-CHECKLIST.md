@@ -55,8 +55,8 @@ Complete every item before tagging a release or uploading a distributable DMG.
 ## 6 — Universal binary (release-only)
 
 - [ ] `./scripts/macos-setup.sh universal` completes without errors.
-- [ ] `file build-release/dhewm3` shows `Mach-O universal binary with 2 architectures`.
-- [ ] `lipo -info build-release/dhewm3` lists both `x86_64` and `arm64`.
+- [ ] `file build-release/dhewm3.app/Contents/MacOS/dhewm3` shows `Mach-O universal binary with 2 architectures`.
+- [ ] `lipo -info build-release/dhewm3.app/Contents/MacOS/dhewm3` lists both `x86_64` and `arm64`.
 - [ ] `dhewm3-universal.dmg` is created and mounts cleanly.
 
 ## 7 — Code signing & notarization (signed release only)

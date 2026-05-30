@@ -41,11 +41,15 @@ That is it. The rest of this document covers build-from-source, CMake presets, C
 #    creates dhewm3.app + a DMG in the repo root:
 ./scripts/macos-setup.sh
 
-# 3. Launch — double-click dhewm3.app, or from Terminal:
-./scripts/macos-run.sh
+# 3. Preflight (optional) and launch:
+./scripts/macos-preflight.sh --build
+./scripts/macos-run.sh --app              # GUI — same as double-clicking dhewm3.app
+./scripts/macos-run.sh                      # Terminal, auto-discovers Steam data
 
 # Or supply your Doom 3 installation path directly:
 ./scripts/macos-run.sh /path/to/doom3/
+
+# M1 user testing guide: docs/MACOS-USER-TEST-M1.md
 ```
 
 ---

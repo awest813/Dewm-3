@@ -1418,3 +1418,18 @@ if(D3XP AND NOT HARDLINK_GAME)
 		)
 	endif()
 endif()
+
+# Place game .dylib modules next to the engine inside the .app bundle on macOS.
+if(APPLE AND CORE AND NOT HARDLINK_GAME)
+	set(_DHEWM3_MACOS_BUNDLE_BIN "${CMAKE_BINARY_DIR}/dhewm3.app/Contents/MacOS")
+	if(BASE)
+		set_target_properties(base PROPERTIES
+			LIBRARY_OUTPUT_DIRECTORY "${_DHEWM3_MACOS_BUNDLE_BIN}"
+		)
+	endif()
+	if(D3XP)
+		set_target_properties(d3xp PROPERTIES
+			LIBRARY_OUTPUT_DIRECTORY "${_DHEWM3_MACOS_BUNDLE_BIN}"
+		)
+	endif()
+endif()

@@ -17,14 +17,11 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=macos-lib.sh
+source "$REPO_ROOT/scripts/macos-lib.sh"
+
 BUILD_DIR="${1:-$REPO_ROOT/build}"
-# cmake MACOSX_BUNDLE places the binary inside an .app bundle; fall back to a
-# flat binary for non-bundle builds (e.g. manual cmake without MACOSX_BUNDLE).
-if [[ -x "$BUILD_DIR/dhewm3.app/Contents/MacOS/dhewm3" ]]; then
-  BINARY="$BUILD_DIR/dhewm3.app/Contents/MacOS/dhewm3"
-else
-  BINARY="$BUILD_DIR/dhewm3"
-fi
+BINARY="$(macos_engine_binary "$BUILD_DIR")" || BINARY=""
 PLIST_SRC="$REPO_ROOT/dist/macosx/Info.plist"
 LAUNCHER_SRC="$REPO_ROOT/scripts/macos-firstrun.sh"
 APP_DIR="$REPO_ROOT/dhewm3.app"

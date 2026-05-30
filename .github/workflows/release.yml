@@ -46,27 +46,31 @@ jobs:
 
       - name: Verify binary
         run: |
-          file build/dhewm3
-          otool -L build/dhewm3 | grep -E 'openal|SDL2|curl' || true
-          ./build/dhewm3 -h > smoke.log 2>&1 || true
+          BINARY="build/dhewm3.app/Contents/MacOS/dhewm3"
+          file "$BINARY"
+          otool -L "$BINARY" | grep -E 'openal|SDL2|curl' || true
+          "$BINARY" -h > smoke.log 2>&1 || true
           head -n 20 smoke.log
 
       - name: Assemble .app and DMG
         run: |
-          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh scripts/macos-lib.sh
           ./scripts/macos-bundle.sh build
 
       - name: Rename DMG with arch suffix
         run: mv dhewm3-${{ matrix.arch }}.dmg dhewm3-macos-${{ matrix.arch }}.dmg
 
-      # Upload the bare engine binary + dylibs so the universal job can lipo them.
+      # Upload engine + game dylibs for the universal lipo job.
+      - name: Stage engine artifacts (for universal assembly)
+        run: |
+          source scripts/macos-lib.sh
+          macos_stage_engine_artifacts build engine-stage
+
       - name: Upload engine binary (for universal assembly)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: engine-${{ matrix.arch }}
-          path: |
-            build/dhewm3
-            build/*.dylib
+          path: engine-stage/
           if-no-files-found: error
 
       - name: Upload per-arch DMG
