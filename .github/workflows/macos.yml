@@ -78,7 +78,7 @@ jobs:
 
       - name: Assemble .app bundle and DMG
         run: |
-          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh scripts/macos-lib.sh
           ./scripts/macos-bundle.sh build
 
       - name: Upload build artifact
@@ -116,7 +116,7 @@ jobs:
 
       - name: Assemble universal .app
         run: |
-          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh scripts/macos-lib.sh
           ./scripts/macos-bundle.sh build-release
 
       - name: Import signing certificate
