@@ -106,6 +106,9 @@ cmake --build build --parallel
 See [docs/MACOS.md](./docs/MACOS.md) for the full support matrix, CMake preset reference,
 CI details, signing/notarization, troubleshooting, and the release maintainer guide.
 
+**Apple Silicon user testing (e.g. MacBook Air M1):** [docs/MACOS-USER-TEST-M1.md](./docs/MACOS-USER-TEST-M1.md) —
+preflight script, test checklist, and feedback template.
+
 
 # PLAYING ON LINUX
 

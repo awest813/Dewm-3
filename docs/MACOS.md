@@ -41,11 +41,15 @@ That is it. The rest of this document covers build-from-source, CMake presets, C
 #    creates dhewm3.app + a DMG in the repo root:
 ./scripts/macos-setup.sh
 
-# 3. Launch — double-click dhewm3.app, or from Terminal:
-./scripts/macos-run.sh
+# 3. Preflight (optional) and launch:
+./scripts/macos-preflight.sh --build
+./scripts/macos-run.sh --app              # GUI — same as double-clicking dhewm3.app
+./scripts/macos-run.sh                      # Terminal, auto-discovers Steam data
 
 # Or supply your Doom 3 installation path directly:
 ./scripts/macos-run.sh /path/to/doom3/
+
+# M1 user testing guide: docs/MACOS-USER-TEST-M1.md
 ```
 
 ---
@@ -301,14 +305,14 @@ Build each architecture separately and combine with `lipo`:
 
 ```sh
 # Build arm64
-./scripts/macos-setup.sh arm64
-cp build/dhewm3.app/Contents/MacOS/dhewm3 /tmp/dhewm3-arm64
+./scripts/macos-setup.sh arm64      # produces build/dhewm3 (arm64)
+cp build/dhewm3 /tmp/dhewm3-arm64
 
 # Build x86_64 (on an Intel Mac or Rosetta shell with x86_64 Homebrew)
-./scripts/macos-setup.sh x86_64
-cp build/dhewm3.app/Contents/MacOS/dhewm3 /tmp/dhewm3-x86_64
+./scripts/macos-setup.sh x86_64     # produces build/dhewm3 (x86_64)
+cp build/dhewm3 /tmp/dhewm3-x86_64
 
-# Combine into a staging dir for macos-bundle.sh
+# Combine
 mkdir -p build-release
 lipo -create /tmp/dhewm3-arm64 /tmp/dhewm3-x86_64 -output build-release/dhewm3
 ./scripts/macos-bundle.sh build-release
@@ -318,7 +322,7 @@ Verify the result:
 
 ```sh
 file build-release/dhewm3
-lipo -info build-release/dhewm3   # when using flat staging dir above
+lipo -info build-release/dhewm3
 # Both x86_64 and arm64 must be listed.
 
 plutil -lint dhewm3.app/Contents/Info.plist

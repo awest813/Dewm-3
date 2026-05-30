@@ -69,7 +69,12 @@ cmake --build "$BUILD_DIR" --parallel
 # ── 6. Verify ─────────────────────────────────────────────────────────────────
 echo ""
 echo "==> Verifying binary…"
-VERIFY_BINARY="$(macos_engine_binary "$BUILD_DIR")"
+# cmake MACOSX_BUNDLE places the binary inside an .app bundle
+if [[ -x "$BUILD_DIR/dhewm3.app/Contents/MacOS/dhewm3" ]]; then
+  VERIFY_BINARY="$BUILD_DIR/dhewm3.app/Contents/MacOS/dhewm3"
+else
+  VERIFY_BINARY="$BUILD_DIR/dhewm3"
+fi
 file "$VERIFY_BINARY"
 
 echo ""
@@ -81,7 +86,11 @@ echo "==> Assembling dhewm3.app and creating DMG…"
 "$REPO_ROOT/scripts/macos-bundle.sh" "$BUILD_DIR"
 
 echo ""
-echo "To launch dhewm3, double-click dhewm3.app — or run:"
-echo "  ./scripts/macos-run.sh"
+echo "==> Ready for M1 user testing"
+echo "  Preflight:  ./scripts/macos-preflight.sh --build"
+echo "  Launch GUI: ./scripts/macos-run.sh --app     (or double-click dhewm3.app)"
+echo "  Launch CLI: ./scripts/macos-run.sh"
+echo "  Guide:      docs/MACOS-USER-TEST-M1.md"
+echo ""
 echo "Or supply your Doom 3 data path directly:"
 echo "  ./scripts/macos-run.sh /path/to/doom3/"
