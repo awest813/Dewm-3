@@ -2216,6 +2216,16 @@ static void DrawAudioOptionsMenu()
 }
 
 static CVarOption gameOptions[] = {
+	CVarOption( "Difficulty" ),
+	CVarOption( "g_skill", [](idCVar& cvar) {
+			int val = cvar.GetInteger();
+			if ( val < 0 ) val = 0;
+			if ( val > 3 ) val = 3;
+			if ( ImGui::Combo( "Difficulty Level", &val, "Easy\0Medium\0Hard\0Nightmare\0" ) ) {
+				cvar.SetInteger( val );
+			}
+			AddCVarOptionTooltips( cvar, "Difficulty level (takes effect on new game or loaded save)" );
+		} ),
 	CVarOption( "Movement and Weapons" ),
 	CVarOption( "in_alwaysRun", "Always Run (Multiplayer-only by default)", OT_BOOL ),
 	CVarOption( "in_allowAlwaysRunInSP", "Allow Always Run and Toggle Run in Singleplayer\n(Stamina is still limited!)", OT_BOOL ),
@@ -2236,6 +2246,7 @@ static CVarOption gameOptions[] = {
 	CVarOption( "g_bloodEffects", "Show Blood and Gibs", OT_BOOL ),
 	CVarOption( "g_doubleVision", "Show Double Vision when Taking Damage", OT_BOOL ),
 	CVarOption( "g_hitEffect", "Mess Up Player Camera when Taking Damage", OT_BOOL ),
+	CVarOption( "g_viewBobScale", "View Bob Scale (0 = no bob, 1 = default)", OT_FLOAT, 0.0f, 2.0f ),
 	CVarOption( "con_noPrint", "Print console output only to console, don't show when it's closed", OT_BOOL ),
 };
 

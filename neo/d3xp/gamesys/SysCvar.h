@@ -199,6 +199,7 @@ extern idCVar	pm_runroll;
 extern idCVar	pm_bobup;
 extern idCVar	pm_bobpitch;
 extern idCVar	pm_bobroll;
+extern idCVar	g_viewBobScale;
 extern idCVar	pm_thirdPersonRange;
 extern idCVar	pm_thirdPersonHeight;
 extern idCVar	pm_thirdPersonAngle;
