@@ -1308,7 +1308,13 @@ else()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES COMPILE_DEFINITIONS "__DOOM_DLL__;${TOOLS_DEFINES}")
 endif()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES LINK_FLAGS "${ldflags}")
-	set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/sys/osx/Info.plist)
+	# Prefer the distributable Info.plist (first-run launcher); fall back to legacy.
+	set(_DHEWM3_MACOS_PLIST "${CMAKE_SOURCE_DIR}/../dist/macosx/Info.plist")
+	if(EXISTS "${_DHEWM3_MACOS_PLIST}")
+		set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${_DHEWM3_MACOS_PLIST}")
+	else()
+		set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/sys/osx/Info.plist)
+	endif()
 
 	target_link_libraries(${DHEWM3BINARY}
 		idlib
@@ -1430,6 +1436,25 @@ if(APPLE AND CORE AND NOT HARDLINK_GAME)
 	if(D3XP)
 		set_target_properties(d3xp PROPERTIES
 			LIBRARY_OUTPUT_DIRECTORY "${_DHEWM3_MACOS_BUNDLE_BIN}"
+		)
+	endif()
+endif()
+
+# Install first-run launcher + shared lib into the cmake-produced .app bundle.
+if(APPLE AND CORE)
+	set(_DHEWM3_LAUNCHER_SRC "${CMAKE_SOURCE_DIR}/../scripts/macos-firstrun.sh")
+	set(_DHEWM3_MACOS_LIB "${CMAKE_SOURCE_DIR}/../scripts/macos-lib.sh")
+	if(EXISTS "${_DHEWM3_LAUNCHER_SRC}" AND EXISTS "${_DHEWM3_MACOS_LIB}")
+		add_custom_command(TARGET ${DHEWM3BINARY} POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				"${_DHEWM3_LAUNCHER_SRC}"
+				"$<TARGET_BUNDLE_CONTENT_DIR:${DHEWM3BINARY}>/MacOS/dhewm3-launcher"
+			COMMAND ${CMAKE_COMMAND} -E copy
+				"${_DHEWM3_MACOS_LIB}"
+				"$<TARGET_BUNDLE_CONTENT_DIR:${DHEWM3BINARY}>/MacOS/macos-lib.sh"
+			COMMAND chmod +x
+				"$<TARGET_BUNDLE_CONTENT_DIR:${DHEWM3BINARY}>/MacOS/dhewm3-launcher"
+			COMMENT "Installing macOS first-run launcher into dhewm3.app"
 		)
 	endif()
 endif()

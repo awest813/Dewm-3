@@ -43,7 +43,7 @@ PREFS_FILE="$HOME/Library/Application Support/dhewm3/gamepath"
 if [[ -f "$PREFS_FILE" ]]; then
   SAVED="$(cat "$PREFS_FILE")"
   SAVED="${SAVED%/}"
-  if [[ -d "$SAVED/base" ]]; then
+  if macos_has_doom3_data "$SAVED"; then
     echo "Using saved game data path: $SAVED"
     exec "$BINARY" +set fs_basepath "$SAVED"
   fi
@@ -52,44 +52,18 @@ fi
 # ── Explicit path ─────────────────────────────────────────────────────────────
 if [[ $# -ge 1 ]]; then
   GAME_DATA="$1"
-  if [[ ! -d "$GAME_DATA/base" ]]; then
-    echo "Warning: $GAME_DATA/base not found — game data may be missing or path is wrong."
+  if ! macos_has_doom3_data "$GAME_DATA"; then
+    echo "Warning: $GAME_DATA does not contain base/pak000.pk4 — game data may be missing or path is wrong."
     echo "Expected to find pak000.pk4 … pak008.pk4 inside $GAME_DATA/base/"
   fi
   exec "$BINARY" +set fs_basepath "$GAME_DATA"
 fi
 
-# ── Auto-discover common macOS Doom 3 install locations ──────────────────────
-CANDIDATES=(
-  # Steam default library
-  "$HOME/Library/Application Support/Steam/steamapps/common/Doom 3"
-  # GOG / manual installs
-  "$HOME/Games/Doom 3"
-  "/Applications/Doom 3"
-  "$HOME/Library/Application Support/Doom 3"
-)
-
-# Parse Steam libraryfolders.vdf for additional Steam library roots
-VDF="$HOME/Library/Application Support/Steam/steamapps/libraryfolders.vdf"
-if [[ -f "$VDF" ]]; then
-  while IFS= read -r LINE; do
-    if [[ "$LINE" =~ \"path\"[[:space:]]*\"([^\"]+)\" ]]; then
-      CANDIDATES+=("${BASH_REMATCH[1]}/steamapps/common/Doom 3")
-    fi
-  done < "$VDF"
+# ── Auto-discover ─────────────────────────────────────────────────────────────
+if DISCOVERED="$(macos_discover_game_data)"; then
+  echo "Found Doom 3 data at: $DISCOVERED"
+  exec "$BINARY" +set fs_basepath "$DISCOVERED"
 fi
-
-# External volumes — any mounted volume with a Steam library or bare Doom 3 folder
-for VOL_PATH in /Volumes/*/steamapps/common/Doom\ 3 /Volumes/*/Doom\ 3; do
-  [[ -d "$VOL_PATH" ]] && CANDIDATES+=("$VOL_PATH")
-done
-
-for CANDIDATE in "${CANDIDATES[@]}"; do
-  if [[ -d "$CANDIDATE/base" ]]; then
-    echo "Found Doom 3 data at: $CANDIDATE"
-    exec "$BINARY" +set fs_basepath "$CANDIDATE"
-  fi
-done
 
 # ── Not found ─────────────────────────────────────────────────────────────────
 cat <<'EOF'
