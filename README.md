@@ -182,7 +182,7 @@ Or using CMake presets directly:
 ```sh
 cmake -S neo --preset linux-x86_64   # or linux-arm64
 cmake --build build --parallel
-./build/dhewm3 +set fs_basepath /path/to/doom3/
+./build/dhewm3.app/Contents/MacOS/dhewm3 +set fs_basepath /path/to/doom3/
 ```
 
 ## Compiling (Windows)

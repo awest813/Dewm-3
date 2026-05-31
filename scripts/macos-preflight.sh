@@ -95,7 +95,7 @@ if [[ -f "$PREFS_FILE" ]]; then
   SAVED="$(tr -d '\n' < "$PREFS_FILE")"
   SAVED="${SAVED%/}"
   pass "Saved game path: $SAVED"
-  if [[ -d "$SAVED/base/pak000.pk4" ]]; then
+  if [[ -f "$SAVED/base/pak000.pk4" ]]; then
     pass "Saved path contains base/pak000.pk4"
   else
     warn "Saved path missing base/pak000.pk4 — picker will run again"
@@ -103,7 +103,7 @@ if [[ -f "$PREFS_FILE" ]]; then
 fi
 
 FOUND_DATA=""
-if [[ -d "$STEAM_D3/base/pak000.pk4" ]]; then
+if [[ -f "$STEAM_D3/base/pak000.pk4" ]]; then
   FOUND_DATA="$STEAM_D3"
   pass "Steam Doom 3 install found: $STEAM_D3"
 else
@@ -127,6 +127,11 @@ if [[ "$CHECK_BUILD" -eq 1 ]]; then
       pass "Info.plist is valid"
     else
       fail "Info.plist failed plutil -lint"
+    fi
+    if compgen -G "$APP/Contents/MacOS/"*.dylib >/dev/null; then
+      pass "Game modules present in .app (base.dylib, etc.)"
+    else
+      warn "No *.dylib in .app — base game may not load (re-run macos-bundle.sh)"
     fi
   else
     fail "dhewm3.app not found — run: ./scripts/macos-setup.sh"

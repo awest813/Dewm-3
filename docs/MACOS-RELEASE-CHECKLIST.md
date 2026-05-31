@@ -9,9 +9,9 @@ Complete every item before tagging a release or uploading a distributable DMG.
 
 - [ ] `./scripts/macos-setup.sh` completes without errors on Apple Silicon.
 - [ ] `./scripts/macos-setup.sh` completes without errors on Intel (or `macos-13` CI runner).
-- [ ] `file build/dhewm3` confirms the expected architecture (`arm64` / `x86_64`).
-- [ ] `otool -L build/dhewm3 | grep -E 'openal|SDL2|curl'` shows Homebrew paths (not `/System/Library/…`).
-- [ ] `./build/dhewm3 -h` runs and prints a usage message (exit code may be non-zero — normal).
+- [ ] `file build/dhewm3.app/Contents/MacOS/dhewm3` confirms the expected architecture (`arm64` / `x86_64`).
+- [ ] `otool -L build/dhewm3.app/Contents/MacOS/dhewm3 | grep -E 'openal|SDL2|curl'` shows Homebrew paths (not `/System/Library/…`).
+- [ ] `build/dhewm3.app/Contents/MacOS/dhewm3 -h` runs and prints a usage message (exit code may be non-zero — normal).
 
 ## 2 — App bundle
 

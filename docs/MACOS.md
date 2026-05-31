@@ -117,7 +117,7 @@ If none are found, the script prints the path to supply manually:
 You can also pass the path directly to the binary:
 
 ```sh
-./build/dhewm3 +set fs_basepath /path/to/doom3/
+./build/dhewm3.app/Contents/MacOS/dhewm3 +set fs_basepath /path/to/doom3/
 ```
 
 ---
@@ -204,27 +204,35 @@ cmake --build build --parallel
 After a successful build, run these commands to confirm everything is working:
 
 ```sh
+# Engine path (cmake MACOSX_BUNDLE layout)
+ENGINE=build/dhewm3.app/Contents/MacOS/dhewm3
+
 # 1. Check the binary exists and is the right architecture
-file build/dhewm3
-# Expected (Apple Silicon): build/dhewm3: Mach-O 64-bit executable arm64
-# Expected (Intel):          build/dhewm3: Mach-O 64-bit executable x86_64
+file "$ENGINE"
+# Expected (Apple Silicon): Mach-O 64-bit executable arm64
+# Expected (Intel):          Mach-O 64-bit executable x86_64
 
 # 2. Confirm it links correctly and prints usage
-./build/dhewm3 -h 2>&1 | head -5
+"$ENGINE" -h 2>&1 | head -5
 # Expected: a short usage/help message (exit code may be non-zero — that is normal)
 
 # 3. Verify Homebrew dylibs are found
-otool -L build/dhewm3 | grep -E 'openal|sdl2|SDL2|curl'
+otool -L "$ENGINE" | grep -E 'openal|sdl2|SDL2|curl'
 # Expected: lines pointing to Homebrew paths like /opt/homebrew/… or /usr/local/…
+
+# 4. Game modules are bundled next to the engine
+ls build/dhewm3.app/Contents/MacOS/*.dylib
+# Expected: base.dylib (and d3xp.dylib if built)
 ```
 
 For a universal binary (release builds):
 
 ```sh
-file build-release/dhewm3
-# Expected: build-release/dhewm3: Mach-O universal binary with 2 architectures: [x86_64:…] [arm64:…]
-lipo -info build-release/dhewm3
-# Expected: Architectures in the fat file: build-release/dhewm3 are: x86_64 arm64
+ENGINE=build-release/dhewm3.app/Contents/MacOS/dhewm3
+file "$ENGINE"
+# Expected: Mach-O universal binary with 2 architectures: [x86_64:…] [arm64:…]
+lipo -info "$ENGINE"
+# Expected: Architectures in the fat file are: x86_64 arm64
 ```
 
 ---
@@ -305,24 +313,26 @@ Build each architecture separately and combine with `lipo`:
 
 ```sh
 # Build arm64
-./scripts/macos-setup.sh arm64      # produces build/dhewm3 (arm64)
-cp build/dhewm3 /tmp/dhewm3-arm64
+./scripts/macos-setup.sh arm64
+cp build/dhewm3.app/Contents/MacOS/dhewm3 /tmp/dhewm3-arm64
 
 # Build x86_64 (on an Intel Mac or Rosetta shell with x86_64 Homebrew)
-./scripts/macos-setup.sh x86_64     # produces build/dhewm3 (x86_64)
-cp build/dhewm3 /tmp/dhewm3-x86_64
+./scripts/macos-setup.sh x86_64
+cp build/dhewm3.app/Contents/MacOS/dhewm3 /tmp/dhewm3-x86_64
 
-# Combine
+# Combine engine + game dylibs, then bundle
 mkdir -p build-release
 lipo -create /tmp/dhewm3-arm64 /tmp/dhewm3-x86_64 -output build-release/dhewm3
+# Copy and lipo-merge game .dylibs from each arch build (see release.yml CI)
 ./scripts/macos-bundle.sh build-release
 ```
 
 Verify the result:
 
 ```sh
-file build-release/dhewm3
-lipo -info build-release/dhewm3
+ENGINE=build-release/dhewm3.app/Contents/MacOS/dhewm3
+file "$ENGINE"
+lipo -info "$ENGINE"
 # Both x86_64 and arm64 must be listed.
 
 plutil -lint dhewm3.app/Contents/Info.plist
@@ -344,7 +354,8 @@ Before publishing a release, complete every item in
 | Build picks up wrong Homebrew prefix | Non-standard Homebrew install | `cmake -S neo --preset macos-arm64 -DHOMEBREW_PREFIX=/your/brew/prefix` |
 | `dhewm3 -h` exits non-zero | Expected — dhewm3 exits with code 1 after printing help | This is normal; check the output, not the exit code. |
 | `pak*.pk4 not found` at startup | `fs_basepath` points to wrong directory | Directory must contain `base/pak000.pk4`. Run `./scripts/macos-run.sh /correct/path/` |
-| Game crashes immediately on arm64 | OpenAL Soft from Apple's SDK (not Homebrew) linked in | `brew install openal-soft`; confirm with `otool -L build/dhewm3 \| grep openal` that it links Homebrew's copy, not `/System/Library/…`. |
+| Game crashes immediately on arm64 | OpenAL Soft from Apple's SDK (not Homebrew) linked in | `brew install openal-soft`; confirm with `otool -L build/dhewm3.app/Contents/MacOS/dhewm3 \| grep openal` that it links Homebrew's copy, not `/System/Library/…`. |
+| Game starts but cannot load mods / expansion | `base.dylib` missing from `.app` | Re-run `./scripts/macos-bundle.sh`; game modules live in `dhewm3.app/Contents/MacOS/*.dylib`. |
 | Universal build missing x86_64 slice | x86_64 Homebrew deps absent | Use the `release.yml` CI workflow which assembles universal binaries via `lipo` from separate per-arch builds — no dual-Homebrew setup required. |
 | Folder-picker dialog appears every launch | Saved path (`~/Library/Application Support/dhewm3/gamepath`) missing or stale | Pick the correct folder in the dialog, or: `echo /path/to/doom3 > ~/Library/Application\ Support/dhewm3/gamepath` |
 | Gatekeeper blocks the app (*"dhewm3 cannot be opened because it is from an unidentified developer"*) | Unsigned build | **Quick fix:** right-click (or Control-click) `dhewm3` in Applications → **Open** → **Open** (once only). **Permanent fix:** use the `dhewm3-macos-universal-signed.dmg` from the Releases page, which is signed + notarized and passes Gatekeeper without any workaround. |

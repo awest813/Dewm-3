@@ -83,11 +83,13 @@ fi
 # dhewm3 engine binary (renamed so the launcher can call it)
 cp "$BINARY" "$APP_DIR/Contents/MacOS/dhewm3"
 
-# Game library .dylibs (base.dylib, d3xp.dylib, etc.) if present
-find "$BUILD_DIR" -maxdepth 1 -name "*.dylib" -exec cp {} "$APP_DIR/Contents/MacOS/" \;
+# Game library .dylibs (base.dylib, d3xp.dylib, etc.) — cmake places them inside
+# build/dhewm3.app/Contents/MacOS/ as well as the build root on some setups.
+macos_copy_game_dylibs "$BUILD_DIR" "$APP_DIR/Contents/MacOS"
 
 # Launcher script (the CFBundleExecutable that macOS actually runs)
 cp "$LAUNCHER_SRC" "$APP_DIR/Contents/MacOS/dhewm3-launcher"
+cp "$REPO_ROOT/scripts/macos-lib.sh" "$APP_DIR/Contents/MacOS/macos-lib.sh"
 chmod +x "$APP_DIR/Contents/MacOS/dhewm3-launcher"
 chmod +x "$APP_DIR/Contents/MacOS/dhewm3"
 
