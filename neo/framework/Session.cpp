@@ -60,6 +60,8 @@ idCVar	idSessionLocal::com_guid( "com_guid", "", CVAR_SYSTEM | CVAR_ARCHIVE | CV
 
 idCVar	idSessionLocal::com_numQuicksaves( "com_numQuicksaves", "4", CVAR_SYSTEM|CVAR_ARCHIVE|CVAR_INTEGER,
                                            "number of quicksaves to keep before overwriting the oldest", 1, 99 );
+idCVar	idSessionLocal::com_noLevelStartAutosave( "com_noLevelStartAutosave", "0", CVAR_SYSTEM | CVAR_ARCHIVE | CVAR_BOOL,
+                                                  "do not create an autosave when entering a new level" );
 
 idSessionLocal		sessLocal;
 idSession			*session = &sessLocal;
@@ -1246,7 +1248,7 @@ void idSessionLocal::MoveToNewMap( const char *mapName ) {
 
 	ExecuteMapChange();
 
-	if ( !mapSpawnData.serverInfo.GetBool("devmap") ) {
+	if ( !mapSpawnData.serverInfo.GetBool("devmap") && !com_noLevelStartAutosave.GetBool() ) {
 		// Autosave at the beginning of the level
 
 		// DG: set an explicit savename to avoid problems with autosave names

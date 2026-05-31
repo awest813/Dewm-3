@@ -1580,7 +1580,7 @@ static CVarOption controlOptions[] = {
 	CVarOption("joy_triggerThreshold", "Trigger Threshold/Deadzone", OT_FLOAT, 0.0f, 0.99f),
 	CVarOption("joy_pitchSpeed", "Pitch speed (for looking up/down)", OT_INT, 60.0f, 600.0f),
 	CVarOption("joy_yawSpeed", "Yaw speed (for looking left/right)", OT_INT, 60.0f, 600.0f),
-	// TODO: joy_invertLook? (I don't really see the point, one can just bind move stick up to look down)
+	CVarOption("joy_invertLook", "Invert right-stick look up/down", OT_BOOL),
 	CVarOption("joy_gammaLook", "Use logarithmic gamma curve instead of power curve for axes", OT_BOOL),
 	CVarOption("joy_powerScale", "If using power curve, this is the exponent", OT_FLOAT, 0.1f, 10.0f), // TODO: what are sensible min/max values?
 	// TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they were "bad idea"
@@ -2219,12 +2219,16 @@ static CVarOption gameOptions[] = {
 	CVarOption( "Movement and Weapons" ),
 	CVarOption( "in_alwaysRun", "Always Run (Multiplayer-only by default)", OT_BOOL ),
 	CVarOption( "in_allowAlwaysRunInSP", "Allow Always Run and Toggle Run in Singleplayer\n(Stamina is still limited!)", OT_BOOL ),
-	CVarOption( "in_toggleRun", "Toggle Run (Multiplayer-only by default)", OT_BOOL ),
+	CVarOption( "in_toggleRun", "Toggle Run (needs Allow Always Run in SP for singleplayer)", OT_BOOL ),
 	CVarOption( "in_toggleCrouch", "Toggle Crouch", OT_BOOL ),
 	CVarOption( "in_toggleZoom", "Toggle Zoom", OT_BOOL ),
 	CVarOption( "ui_autoReload", "Auto Weapon Reload", OT_BOOL ),
 	CVarOption( "ui_autoSwitch", "Auto Weapon Switch", OT_BOOL ),
+	CVarOption( "Saving" ),
+	CVarOption( "com_numQuicksaves", "Rotating QuickSave slots (oldest is overwritten)", OT_INT, 1, 99 ),
+	CVarOption( "com_noLevelStartAutosave", "Skip autosave when entering a new level", OT_BOOL ),
 	CVarOption( "Visual" ),
+	CVarOption( "g_fov", "Field of view in degrees (multiplayer clamps to 90–110)", OT_INT, 60, 120 ),
 	CVarOption( "g_showHud", "Show HUD", OT_BOOL ),
 	CVarOption( "com_showFPS", "Show Framerate (FPS)", OT_BOOL ),
 	CVarOption( "ui_showGun", "Show Gun Model", OT_BOOL ),

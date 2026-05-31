@@ -22,7 +22,10 @@ Note: Numbers starting with a "#" like #330 refer to the bugreport with that num
 * Replaced dependency on (external) zlib with integrated [miniz](https://github.com/richgel999/miniz)
 * HighDPI/Retina support
 * Allow inverted mouse look (horizontally, vertically or both) with `m_invertLook`
+* Settings menu (F10): field of view (`g_fov`), rotating QuickSave slot count (`com_numQuicksaves`),
+  gamepad invert-look (`joy_invertLook`), and optional skip of level-start autosaves (`com_noLevelStartAutosave`)
 * CVar to allow always run in single player (still drains stamina though!): `in_allowAlwaysRunInSP`
+* `com_noLevelStartAutosave`: disable the autosave created when entering each new level
 * VSync can be enabled/disabled on the fly, without restarting the renderer (still with `r_swapInterval`
   or in the menu, of course; needs SDL2)
 * Allow enabling/disabling [HRTF](https://en.wikipedia.org/wiki/Head-related_transfer_function)
