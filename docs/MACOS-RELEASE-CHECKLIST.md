@@ -3,6 +3,29 @@
 This is the **release gate** for all Mac-friendly dhewm3 builds.
 Complete every item before tagging a release or uploading a distributable DMG.
 
+## Automated checks
+
+On a Mac, after `./scripts/macos-setup.sh`, run:
+
+```sh
+chmod +x scripts/macos-release-checklist.sh
+./scripts/macos-release-checklist.sh --all
+```
+
+That script verifies everything it can from §1–3, §5–6 (with flags), §7 (with `--signed`), and §8.
+Items in §4 and the interactive parts of §7 stay **manual** — they need a real Doom 3 install and GUI testing.
+
+| Flag | Checklist section |
+|------|-------------------|
+| *(default)* | §1–3, §8 |
+| `--discovery` | §5 Steam / GOG path discovery |
+| `--dmg` | §3 mount, `dhewm3.app` + `/Applications` symlink |
+| `--universal` | §6 after `./scripts/macos-setup.sh universal` |
+| `--signed /path/to/dhewm3.app` | §7 `spctl` / `codesign` on a signed build |
+| `--all` | All of the above except `--signed` |
+
+CI runs the default checks on every macOS workflow build (no game data required).
+
 ---
 
 ## 1 — Build verification
