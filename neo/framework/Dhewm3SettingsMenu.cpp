@@ -2213,7 +2213,7 @@ static void DrawAudioOptionsMenu()
 
 			ImGui::Text( "Device's Playback Mode: %s with samplerate %dHz", modeName, sampleRate );
 		} else {
-			ImGui::Text( "Devices's Samplerate: %dHz", sampleRate );
+			ImGui::Text( "Device's Samplerate: %dHz", sampleRate );
 		}
 
 		if ( idSoundSystemLocal::alOutputLimiterAvailable ) {
