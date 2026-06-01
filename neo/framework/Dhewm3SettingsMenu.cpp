@@ -2264,6 +2264,7 @@ static CVarOption gameOptions[] = {
 	CVarOption( "in_toggleRun", "Toggle Run (needs Allow Always Run in SP for singleplayer)", OT_BOOL ),
 	CVarOption( "in_toggleCrouch", "Toggle Crouch", OT_BOOL ),
 	CVarOption( "in_toggleZoom", "Toggle Zoom", OT_BOOL ),
+	CVarOption( "in_freeLook", "Mouse Look (when off, hold Mouse Look key to look around)", OT_BOOL ),
 	CVarOption( "ui_autoReload", "Auto Weapon Reload", OT_BOOL ),
 	CVarOption( "ui_autoSwitch", "Auto Weapon Switch", OT_BOOL ),
 	CVarOption( "Saving" ),
@@ -2278,6 +2279,10 @@ static CVarOption gameOptions[] = {
 	CVarOption( "g_bloodEffects", "Show Blood and Gibs", OT_BOOL ),
 	CVarOption( "g_doubleVision", "Show Double Vision when Taking Damage", OT_BOOL ),
 	CVarOption( "g_hitEffect", "Mess Up Player Camera when Taking Damage", OT_BOOL ),
+	CVarOption( "g_muzzleFlash", "Show Muzzle Flashes", OT_BOOL ),
+	CVarOption( "g_projectileLights", "Show Dynamic Lights on Projectiles", OT_BOOL ),
+	CVarOption( "g_showBrass", "Show Ejected Shell Casings", OT_BOOL ),
+	CVarOption( "g_showPlayerShadow", "Show Player Model Shadow", OT_BOOL ),
 	CVarOption( "g_viewBobScale", "View Bob Scale (0 = no bob, 1 = default)", OT_FLOAT, 0.0f, 2.0f ),
 	CVarOption( "con_noPrint", "Print console output only to console, don't show when it's closed", OT_BOOL ),
 };
