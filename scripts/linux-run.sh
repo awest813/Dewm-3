@@ -2,8 +2,15 @@
 # linux-run.sh — launch dhewm3, auto-discovering Doom 3 game data.
 #
 # Usage:
-#   ./scripts/linux-run.sh                    # auto-discover game data
-#   ./scripts/linux-run.sh /path/to/doom3/    # use an explicit path
+#   ./scripts/linux-run.sh                              # auto-discover game data
+#   ./scripts/linux-run.sh /path/to/doom3/              # use an explicit path
+#   ./scripts/linux-run.sh /path/to/doom3/ [engine args…]  # pass extra engine args
+#
+# Any arguments after the (optional) game-data path are forwarded directly to
+# the dhewm3 engine.  When no path is supplied, all arguments are forwarded.
+# Examples:
+#   ./scripts/linux-run.sh +set r_fullscreen 0
+#   ./scripts/linux-run.sh /path/to/doom3/ +set r_fullscreen 0 +set com_allowConsole 1
 #
 # The script checks these locations in order:
 #   1. Saved path (~/.local/share/dhewm3/gamepath, written by this script
@@ -53,7 +60,7 @@ fi
 
 if [[ -n "$SAVED_PATH" ]] && has_doom3_data "$SAVED_PATH"; then
   echo "Using saved game data path: $SAVED_PATH"
-  exec "$BINARY" +set fs_basepath "$SAVED_PATH"
+  exec "$BINARY" +set fs_basepath "$SAVED_PATH" "$@"
 fi
 
 # ── Explicit path from command line ───────────────────────────────────────────
@@ -65,7 +72,7 @@ if [[ $# -ge 1 ]]; then
     echo "         Expected the top-level Doom 3 folder (the one containing base/)."
   fi
   echo "$GAME_DATA" > "$PREFS_FILE"
-  exec "$BINARY" +set fs_basepath "$GAME_DATA"
+  exec "$BINARY" +set fs_basepath "$GAME_DATA" "${@:2}"
 fi
 
 # ── Auto-discover ─────────────────────────────────────────────────────────────
@@ -102,7 +109,7 @@ for CANDIDATE in "${CANDIDATES[@]}"; do
   if has_doom3_data "$CANDIDATE"; then
     echo "Found Doom 3 data at: $CANDIDATE"
     echo "$CANDIDATE" > "$PREFS_FILE"
-    exec "$BINARY" +set fs_basepath "$CANDIDATE"
+    exec "$BINARY" +set fs_basepath "$CANDIDATE" "$@"
   fi
 done
 

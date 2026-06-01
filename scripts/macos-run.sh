@@ -2,9 +2,16 @@
 # macos-run.sh — launch dhewm3, auto-discovering Doom 3 game data.
 #
 # Usage:
-#   ./scripts/macos-run.sh                    # auto-discover game data
-#   ./scripts/macos-run.sh --app              # open dhewm3.app (GUI / user testing)
-#   ./scripts/macos-run.sh /path/to/doom3/    # use an explicit path
+#   ./scripts/macos-run.sh                              # auto-discover game data
+#   ./scripts/macos-run.sh --app                        # open dhewm3.app (GUI / user testing)
+#   ./scripts/macos-run.sh /path/to/doom3/              # use an explicit path
+#   ./scripts/macos-run.sh /path/to/doom3/ [engine args…]  # pass extra engine args
+#
+# Any arguments after the (optional) game-data path are forwarded directly to
+# the dhewm3 engine.  When no path is supplied, all arguments are forwarded.
+# Examples:
+#   ./scripts/macos-run.sh +set r_fullscreen 0
+#   ./scripts/macos-run.sh /path/to/doom3/ +set r_fullscreen 0 +set com_allowConsole 1
 
 set -euo pipefail
 
@@ -45,7 +52,7 @@ if [[ -f "$PREFS_FILE" ]]; then
   SAVED="${SAVED%/}"
   if macos_has_doom3_data "$SAVED"; then
     echo "Using saved game data path: $SAVED"
-    exec "$BINARY" +set fs_basepath "$SAVED"
+    exec "$BINARY" +set fs_basepath "$SAVED" "$@"
   fi
 fi
 
@@ -56,13 +63,16 @@ if [[ $# -ge 1 ]]; then
     echo "Warning: $GAME_DATA does not contain base/pak000.pk4 — game data may be missing or path is wrong."
     echo "Expected to find pak000.pk4 … pak008.pk4 inside $GAME_DATA/base/"
   fi
-  exec "$BINARY" +set fs_basepath "$GAME_DATA"
+  # Save the explicit path for future launches (matches linux-run.sh behaviour).
+  mkdir -p "$(dirname "$PREFS_FILE")"
+  echo "$GAME_DATA" > "$PREFS_FILE"
+  exec "$BINARY" +set fs_basepath "$GAME_DATA" "${@:2}"
 fi
 
 # ── Auto-discover ─────────────────────────────────────────────────────────────
 if DISCOVERED="$(macos_discover_game_data)"; then
   echo "Found Doom 3 data at: $DISCOVERED"
-  exec "$BINARY" +set fs_basepath "$DISCOVERED"
+  exec "$BINARY" +set fs_basepath "$DISCOVERED" "$@"
 fi
 
 # ── Not found ─────────────────────────────────────────────────────────────────
