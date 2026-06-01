@@ -138,7 +138,7 @@ jobs:
 
       - name: Assemble universal .app and DMG
         run: |
-          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh
+          chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh scripts/macos-lib.sh
           ./scripts/macos-bundle.sh build-universal
           # macos-bundle.sh names the DMG after the detected arch; rename it.
           mv dhewm3-universal.dmg dhewm3-macos-universal.dmg 2>/dev/null || \

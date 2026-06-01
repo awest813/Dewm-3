@@ -54,30 +54,40 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-# Info.plist — inject version from git tag if available
+# Info.plist — inject version and correct minimum macOS version from git tag if available
 cp "$PLIST_SRC" "$APP_DIR/Contents/Info.plist"
 GIT_VERSION="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 2>/dev/null || true)"
 GIT_VERSION="${GIT_VERSION#v}"  # strip leading 'v' if present
-if [[ -n "$GIT_VERSION" ]]; then
-  sed -i.bak \
-    -e "s|<string>1.5.4</string><!-- CFBundleVersion -->|<string>${GIT_VERSION}</string>|" \
-    "$APP_DIR/Contents/Info.plist" 2>/dev/null || true
-  # Also replace the two version strings using a more targeted approach
-  python3 -c "
-import re, sys
+
+# Determine the correct LSMinimumSystemVersion for this binary:
+#   x86_64-only builds support macOS 10.15 (Catalina); all others use 11.0 (Big Sur).
+MIN_MACOS="11.0"
+if [[ "$ARCH_SUFFIX" == "x86_64" ]]; then
+  MIN_MACOS="10.15"
+fi
+
+python3 -c "
+import re
 with open('$APP_DIR/Contents/Info.plist', 'r') as f:
     content = f.read()
+if '$GIT_VERSION':
+    content = re.sub(
+        r'(<key>CFBundleVersion</key>\s*<string>)[^<]*(</string>)',
+        r'\g<1>${GIT_VERSION}\g<2>', content)
+    content = re.sub(
+        r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]*(</string>)',
+        r'\g<1>${GIT_VERSION}\g<2>', content)
 content = re.sub(
-    r'(<key>CFBundleVersion</key>\s*<string>)[^<]*(</string>)',
-    r'\g<1>${GIT_VERSION}\g<2>', content)
-content = re.sub(
-    r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]*(</string>)',
-    r'\g<1>${GIT_VERSION}\g<2>', content)
+    r'(<key>LSMinimumSystemVersion</key>\s*<string>)[^<]*(</string>)',
+    r'\g<1>${MIN_MACOS}\g<2>', content)
 with open('$APP_DIR/Contents/Info.plist', 'w') as f:
     f.write(content)
 " 2>/dev/null || true
-  rm -f "$APP_DIR/Contents/Info.plist.bak"
-  echo "    Version set to: $GIT_VERSION"
+
+if [[ -n "$GIT_VERSION" ]]; then
+  echo "    Version set to: $GIT_VERSION  (min macOS: $MIN_MACOS)"
+else
+  echo "    No git tag found — bundle version unchanged  (min macOS: $MIN_MACOS)"
 fi
 
 # dhewm3 engine binary (renamed so the launcher can call it)
