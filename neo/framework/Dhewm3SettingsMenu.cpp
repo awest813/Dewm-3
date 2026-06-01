@@ -1563,6 +1563,20 @@ static CVarOption controlOptions[] = {
 			}
 			AddCVarOptionTooltips( cvar, "If you played too many flight sims.." );
 		} ),
+	CVarOption("m_pitch", [](idCVar& cvar) {
+			float val = cvar.GetFloat();
+			if ( ImGui::SliderFloat( "Mouse Pitch Scale (vertical)", &val, 0.005f, 0.1f, "%.4f" ) ) {
+				cvar.SetFloat( val );
+			}
+			AddCVarOptionTooltips( cvar, "Vertical mouse sensitivity multiplier (default 0.022). Scales on top of Sensitivity for independent up/down control." );
+		} ),
+	CVarOption("m_yaw", [](idCVar& cvar) {
+			float val = cvar.GetFloat();
+			if ( ImGui::SliderFloat( "Mouse Yaw Scale (horizontal)", &val, 0.005f, 0.1f, "%.4f" ) ) {
+				cvar.SetFloat( val );
+			}
+			AddCVarOptionTooltips( cvar, "Horizontal mouse sensitivity multiplier (default 0.022). Scales on top of Sensitivity for independent left/right control." );
+		} ),
 
 	CVarOption("Keyboard Settings"),
 	CVarOption("in_grabKeyboard", "Grab Keyboard", OT_BOOL),
@@ -1595,7 +1609,7 @@ static CVarOption controlOptions[] = {
 
 static void DrawControlOptionsMenu()
 {
-	DrawOptionsRange( controlOptions, 0, 10 );
+	DrawOptionsRange( controlOptions, 0, 12 );
 
 	const idCVar* useGamepad = cvarSystem->Find( "in_useGamepad" );
 	const bool gamepadEnabled = ( useGamepad != nullptr ) && useGamepad->GetBool();
@@ -1605,12 +1619,12 @@ static void DrawControlOptionsMenu()
 	}
 
 	ImGui::BeginDisabled( !gamepadEnabled );
-	DrawOptionsRange( controlOptions, 10, 17 );
+	DrawOptionsRange( controlOptions, 12, 19 );
 
 	const idCVar* gammaLook = cvarSystem->Find( "joy_gammaLook" );
 	const bool useGammaCurve = ( gammaLook != nullptr ) && gammaLook->GetBool();
 	ImGui::BeginDisabled( useGammaCurve );
-	controlOptions[17].Draw();
+	controlOptions[19].Draw();
 	if ( useGammaCurve ) {
 		AddDescrTooltip( "Power Scale only applies while the logarithmic gamma look curve is disabled." );
 	}
@@ -2265,6 +2279,21 @@ static CVarOption gameOptions[] = {
 	CVarOption( "in_toggleCrouch", "Toggle Crouch", OT_BOOL ),
 	CVarOption( "in_toggleZoom", "Toggle Zoom", OT_BOOL ),
 	CVarOption( "in_freeLook", "Mouse Look (when off, hold Mouse Look key to look around)", OT_BOOL ),
+	CVarOption( "Speed and Stamina" ),
+	CVarOption( "pm_walkspeed", "Walk Speed", OT_FLOAT, 80.0f, 320.0f ),
+	CVarOption( "pm_runspeed", "Run Speed", OT_FLOAT, 100.0f, 500.0f ),
+	CVarOption( "pm_crouchspeed", "Crouch Speed", OT_FLOAT, 20.0f, 200.0f ),
+	CVarOption( "pm_jumpheight", "Jump Height", OT_FLOAT, 10.0f, 160.0f ),
+	CVarOption( "pm_stamina", [](idCVar& cvar) {
+			float val = cvar.GetFloat();
+			const char* fmt = ( val == 0.0f ) ? "Unlimited" : "%.1f s";
+			if ( ImGui::SliderFloat( "Sprint Stamina Duration", &val, 0.0f, 60.0f, fmt ) ) {
+				cvar.SetFloat( val );
+			}
+			AddCVarOptionTooltips( cvar, "How many seconds the player can sprint before slowing down. 0 = unlimited (no stamina drain)." );
+		} ),
+	CVarOption( "pm_staminarate", "Stamina Recharge Rate (higher = faster recharge)", OT_FLOAT, 0.1f, 3.0f ),
+	CVarOption( "Weapons" ),
 	CVarOption( "ui_autoReload", "Auto Weapon Reload", OT_BOOL ),
 	CVarOption( "ui_autoSwitch", "Auto Weapon Switch", OT_BOOL ),
 	CVarOption( "Saving" ),

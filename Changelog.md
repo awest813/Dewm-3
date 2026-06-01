@@ -25,6 +25,11 @@ Note: Numbers starting with a "#" like #330 refer to the bugreport with that num
 * Settings menu (F10): field of view (`g_fov`), rotating QuickSave slot count (`com_numQuicksaves`),
   gamepad invert-look (`joy_invertLook`), optional skip of level-start autosaves (`com_noLevelStartAutosave`),
   difficulty level selector (`g_skill`), and view bob scale (`g_viewBobScale`)
+* Settings menu (F10) Control Options: separate per-axis mouse sensitivity scales (`m_pitch` for
+  vertical, `m_yaw` for horizontal), displayed with four decimal places for precise tuning
+* Settings menu (F10) Game Options: movement speed and stamina tuning — walk speed (`pm_walkspeed`),
+  run speed (`pm_runspeed`), crouch speed (`pm_crouchspeed`), jump height (`pm_jumpheight`), sprint
+  stamina duration (`pm_stamina`, 0 = unlimited), and stamina recharge rate (`pm_staminarate`)
 * CVar to allow always run in single player (still drains stamina though!): `in_allowAlwaysRunInSP`
 * `com_noLevelStartAutosave`: disable the autosave created when entering each new level
 * VSync can be enabled/disabled on the fly, without restarting the renderer (still with `r_swapInterval`
