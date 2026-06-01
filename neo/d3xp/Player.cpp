@@ -5511,7 +5511,12 @@ void idPlayer::UpdateFocus( void ) {
 				focusUI->SetStateInt( "powercell_count", powerCellCount );
 #endif
 
-				int staminapercentage = ( int )( 100.0f * stamina / pm_stamina.GetFloat() );
+				int staminapercentage;
+				if ( !pm_stamina.GetFloat() ) {
+					staminapercentage = 100;
+				} else {
+					staminapercentage = ( int )( 100.0f * stamina / pm_stamina.GetFloat() );
+				}
 				focusUI->SetStateString( "player_health", va("%i", health ) );
 				focusUI->SetStateString( "player_stamina", va( "%i%%", staminapercentage ) );
 				focusUI->SetStateString( "player_armor", va( "%i%%", inventory.armor ) );
@@ -6004,7 +6009,10 @@ idPlayer::GetBaseHeartRate
 */
 int idPlayer::GetBaseHeartRate( void ) {
 	int base = idMath::FtoiFast( ( BASE_HEARTRATE + LOWHEALTH_HEARTRATE_ADJ ) - ( (float)health / 100.0f ) * LOWHEALTH_HEARTRATE_ADJ );
-	int rate = idMath::FtoiFast( base + ( ZEROSTAMINA_HEARTRATE - base ) * ( 1.0f - stamina / pm_stamina.GetFloat() ) );
+	int rate = base;
+	if ( pm_stamina.GetFloat() > 0.0f ) {
+		rate = idMath::FtoiFast( base + ( ZEROSTAMINA_HEARTRATE - base ) * ( 1.0f - stamina / pm_stamina.GetFloat() ) );
+	}
 	int diff = ( lastDmgTime ) ? gameLocal.time - lastDmgTime : 99999;
 	rate += ( diff < 5000 ) ? ( diff < 2500 ) ? ( diff < 1000 ) ? 15 : 10 : 5 : 0;
 	return rate;
@@ -6809,7 +6817,7 @@ void idPlayer::AdjustSpeed( void ) {
 		speed = pm_noclipspeed.GetFloat();
 		bobFrac = 0.0f;
 	} else if ( !physicsObj.OnLadder() && ( usercmd.buttons & BUTTON_RUN ) && ( usercmd.forwardmove || usercmd.rightmove ) && ( usercmd.upmove >= 0 ) ) {
-		if ( !gameLocal.isMultiplayer && !physicsObj.IsCrouching() && !PowerUpActive( ADRENALINE ) ) {
+		if ( pm_stamina.GetFloat() > 0.0f && !gameLocal.isMultiplayer && !physicsObj.IsCrouching() && !PowerUpActive( ADRENALINE ) ) {
 			stamina -= MS2SEC( gameLocal.msec );
 		}
 		if ( stamina < 0 ) {

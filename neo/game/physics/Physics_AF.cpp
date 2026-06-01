@@ -7130,7 +7130,7 @@ int idPhysics_AF::GetBodyId( const char *bodyName ) const {
 			return i;
 		}
 	}
-	gameLocal.Error( "GetBodyId: no body with the name '%s' is not part of the articulated figure.\n", bodyName );
+	gameLocal.Error( "GetBodyId: no body with the name '%s' is part of the articulated figure.\n", bodyName );
 	return 0;
 }
 
@@ -7162,7 +7162,7 @@ int idPhysics_AF::GetConstraintId( const char *constraintName ) const {
 			return i;
 		}
 	}
-	gameLocal.Error( "GetConstraintId: no constraint with the name '%s' is not part of the articulated figure.\n", constraintName );
+	gameLocal.Error( "GetConstraintId: no constraint with the name '%s' is part of the articulated figure.\n", constraintName );
 	return 0;
 }
 
