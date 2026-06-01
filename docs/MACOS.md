@@ -45,6 +45,8 @@ That is it. The rest of this document covers build-from-source, CMake presets, C
 ./scripts/macos-preflight.sh --build
 ./scripts/macos-run.sh --app              # GUI — same as double-clicking dhewm3.app
 ./scripts/macos-run.sh                      # Terminal, auto-discovers Steam data
+./scripts/macos-run.sh --show-path          # print saved game-data path
+./scripts/macos-run.sh --clear-path         # clear saved game-data path
 
 # Or supply your Doom 3 installation path directly:
 ./scripts/macos-run.sh /path/to/doom3/
@@ -102,7 +104,7 @@ run. The data is **not** included in this repository.
 
 `./scripts/macos-run.sh` checks these locations in order:
 
-1. Path given on the command line.
+1. Path given on the command line (when first arg is a path, not an engine arg).
 2. Saved path from a previous launch (`~/Library/Application Support/dhewm3/gamepath`).
 3. `~/Library/Application Support/Steam/steamapps/common/Doom 3` (Steam default library).
 4. Any extra Steam library roots found in `~/Library/Application Support/Steam/steamapps/libraryfolders.vdf`.

@@ -39,6 +39,8 @@ sudo apt install cmake build-essential libsdl2-dev libopenal-dev libcurl4-openss
 # 3. Launch:
 ./scripts/linux-run.sh                       # auto-discover game data
 ./scripts/linux-run.sh /path/to/doom3/       # explicit path
+./scripts/linux-run.sh --show-path           # print saved game-data path
+./scripts/linux-run.sh --clear-path          # clear saved game-data path
 ```
 
 ---
@@ -70,8 +72,8 @@ dhewm3 is an engine; it needs the original Doom 3 game data (version 1.3.1) to r
 
 `./scripts/linux-run.sh` checks these locations in order:
 
-1. Saved path (`~/.local/share/dhewm3/gamepath`) from a previous run.
-2. Path given on the command line.
+1. Path given on the command line (when first arg is a path, not an engine arg).
+2. Saved path (`~/.local/share/dhewm3/gamepath`) from a previous run.
 3. `~/.local/share/Steam/steamapps/common/Doom 3`
 4. `~/.steam/steam/steamapps/common/Doom 3` (legacy Steam symlink location)
 5. Flatpak Steam: `~/.var/app/com.valvesoftware.Steam/…/Doom 3`
