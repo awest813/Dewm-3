@@ -1543,6 +1543,13 @@ static void DrawOptions(CVarOption options[], int numOptions)
 	}
 }
 
+static void DrawOptionsRange( CVarOption options[], int firstOption, int numOptions )
+{
+	for ( int i = firstOption; i < numOptions; ++i ) {
+		options[i].Draw();
+	}
+}
+
 static CVarOption controlOptions[] = {
 
 	CVarOption("Mouse Settings"),
@@ -1585,6 +1592,31 @@ static CVarOption controlOptions[] = {
 	CVarOption("joy_powerScale", "If using power curve, this is the exponent", OT_FLOAT, 0.1f, 10.0f), // TODO: what are sensible min/max values?
 	// TODO: joy_dampenlook and joy_deltaPerMSLook ? comment in code says they were "bad idea"
 };
+
+static void DrawControlOptionsMenu()
+{
+	DrawOptionsRange( controlOptions, 0, 10 );
+
+	const idCVar* useGamepad = cvarSystem->Find( "in_useGamepad" );
+	const bool gamepadEnabled = ( useGamepad != nullptr ) && useGamepad->GetBool();
+
+	if ( !gamepadEnabled ) {
+		ImGui::TextDisabled( "Enable gamepad support above to tune layout, deadzones, and stick response." );
+	}
+
+	ImGui::BeginDisabled( !gamepadEnabled );
+	DrawOptionsRange( controlOptions, 10, 17 );
+
+	const idCVar* gammaLook = cvarSystem->Find( "joy_gammaLook" );
+	const bool useGammaCurve = ( gammaLook != nullptr ) && gammaLook->GetBool();
+	ImGui::BeginDisabled( useGammaCurve );
+	controlOptions[17].Draw();
+	if ( useGammaCurve ) {
+		AddDescrTooltip( "Power Scale only applies while the logarithmic gamma look curve is disabled." );
+	}
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+}
 
 struct VidMode {
 	idStr label;
@@ -2227,8 +2259,8 @@ static CVarOption gameOptions[] = {
 			AddCVarOptionTooltips( cvar, "Difficulty level (takes effect on new game or loaded save)" );
 		} ),
 	CVarOption( "Movement and Weapons" ),
-	CVarOption( "in_alwaysRun", "Always Run (Multiplayer-only by default)", OT_BOOL ),
 	CVarOption( "in_allowAlwaysRunInSP", "Allow Always Run and Toggle Run in Singleplayer\n(Stamina is still limited!)", OT_BOOL ),
+	CVarOption( "in_alwaysRun", "Always Run (enabled in multiplayer, optional in singleplayer)", OT_BOOL ),
 	CVarOption( "in_toggleRun", "Toggle Run (needs Allow Always Run in SP for singleplayer)", OT_BOOL ),
 	CVarOption( "in_toggleCrouch", "Toggle Crouch", OT_BOOL ),
 	CVarOption( "in_toggleZoom", "Toggle Zoom", OT_BOOL ),
@@ -2308,7 +2340,20 @@ void DrawGameOptionsMenu()
 	}
 	AddTooltip( "ui_name" );
 
-	DrawOptions( gameOptions, IM_ARRAYSIZE(gameOptions) );
+	DrawOptionsRange( gameOptions, 0, 4 );
+
+	const idCVar* allowAlwaysRunInSP = cvarSystem->Find( "in_allowAlwaysRunInSP" );
+	const bool runOptionsAvailable = sessLocal.IsMultiplayer() || ( allowAlwaysRunInSP != nullptr && allowAlwaysRunInSP->GetBool() );
+
+	if ( !runOptionsAvailable ) {
+		ImGui::TextDisabled( "Enable the singleplayer override above to use Always Run or Toggle Run outside multiplayer." );
+	}
+
+	ImGui::BeginDisabled( !runOptionsAvailable );
+	DrawOptionsRange( gameOptions, 4, 6 );
+	ImGui::EndDisabled();
+
+	DrawOptionsRange( gameOptions, 6, IM_ARRAYSIZE(gameOptions) );
 }
 
 
@@ -2443,7 +2488,7 @@ void Com_DrawDhewm3SettingsMenu()
 		}
 		if ( ImGui::BeginTabItem("Control Options") ) {
 			BeginTabChild( "ctrlchild" );
-			DrawOptions( controlOptions, IM_ARRAYSIZE(controlOptions) );
+			DrawControlOptionsMenu();
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}
