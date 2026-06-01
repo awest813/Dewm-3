@@ -103,10 +103,14 @@ run. The data is **not** included in this repository.
 `./scripts/macos-run.sh` checks these locations in order:
 
 1. Path given on the command line.
-2. `~/Library/Application Support/Steam/steamapps/common/Doom 3`
-3. `/Volumes/Steam/steamapps/common/Doom 3` (external Steam library)
-4. `~/Games/Doom 3`
-5. `/Applications/Doom 3`
+2. Saved path from a previous launch (`~/Library/Application Support/dhewm3/gamepath`).
+3. `~/Library/Application Support/Steam/steamapps/common/Doom 3` (Steam default library).
+4. Any extra Steam library roots found in `~/Library/Application Support/Steam/steamapps/libraryfolders.vdf`.
+5. `/Volumes/*/steamapps/common/Doom 3` (Steam libraries on external volumes).
+6. `/Volumes/*/Doom 3` (bare Doom 3 folder on external volumes).
+7. `~/Games/Doom 3`
+8. `/Applications/Doom 3`
+9. `~/Library/Application Support/Doom 3`
 
 If none are found, the script prints the path to supply manually:
 
