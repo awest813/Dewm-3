@@ -5,6 +5,9 @@
 #   ./scripts/linux-run.sh                              # auto-discover game data
 #   ./scripts/linux-run.sh /path/to/doom3/              # use an explicit path
 #   ./scripts/linux-run.sh /path/to/doom3/ [engine args…]  # pass extra engine args
+#   ./scripts/linux-run.sh --show-path                  # print saved path, if any
+#   ./scripts/linux-run.sh --clear-path                 # remove saved path
+#   ./scripts/linux-run.sh --help                       # show this help
 #
 # Any arguments after the (optional) game-data path are forwarded directly to
 # the dhewm3 engine.  When no path is supplied, all arguments are forwarded.
@@ -13,9 +16,9 @@
 #   ./scripts/linux-run.sh /path/to/doom3/ +set r_fullscreen 0 +set com_allowConsole 1
 #
 # The script checks these locations in order:
-#   1. Saved path (~/.local/share/dhewm3/gamepath, written by this script
+#   1. Command-line argument (explicit path, when first arg is not an engine arg)
+#   2. Saved path (~/.local/share/dhewm3/gamepath, written by this script
 #      the first time the user supplies a valid path)
-#   2. Command-line argument (explicit path)
 #   3. Steam default library (~/.local/share/Steam/steamapps/common/Doom 3)
 #   4. Extra Steam libraries parsed from libraryfolders.vdf
 #   5. GOG / manual install candidates
@@ -51,6 +54,66 @@ has_doom3_data() {
   [[ -d "$dir/base" && -f "$dir/base/pak000.pk4" ]]
 }
 
+show_help() {
+  cat <<'EOF'
+Usage:
+  ./scripts/linux-run.sh [path/to/doom3] [engine args...]
+  ./scripts/linux-run.sh --show-path
+  ./scripts/linux-run.sh --clear-path
+  ./scripts/linux-run.sh --help
+
+Tips:
+  - If the first argument starts with '+' or '-', it is treated as an engine arg.
+  - Supply the Doom 3 folder (contains base/) as the first argument to override saved path.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_help
+  exit 0
+fi
+
+if [[ "${1:-}" == "--show-path" ]]; then
+  if [[ -f "$PREFS_FILE" ]]; then
+    SAVED="$(cat "$PREFS_FILE")"
+    SAVED="${SAVED%/}"
+    if has_doom3_data "$SAVED"; then
+      echo "Saved game data path: $SAVED"
+    else
+      echo "Saved game data path is invalid: $SAVED"
+    fi
+  else
+    echo "No saved game data path."
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "--clear-path" ]]; then
+  rm -f "$PREFS_FILE"
+  echo "Cleared saved game data path."
+  exit 0
+fi
+
+is_explicit_path_arg=false
+if [[ $# -ge 1 ]]; then
+  case "$1" in
+    +*|-*) is_explicit_path_arg=false ;;
+    *)     is_explicit_path_arg=true ;;
+  esac
+fi
+
+# ── Explicit path from command line ───────────────────────────────────────────
+if [[ "$is_explicit_path_arg" == "true" ]]; then
+  GAME_DATA="${1%/}"
+  if ! has_doom3_data "$GAME_DATA"; then
+    echo "Warning: $GAME_DATA/base/pak000.pk4 not found — game data may be"
+    echo "         missing or the path is wrong."
+    echo "         Expected the top-level Doom 3 folder (the one containing base/)."
+  fi
+  echo "$GAME_DATA" > "$PREFS_FILE"
+  exec "$BINARY" +set fs_basepath "$GAME_DATA" "${@:2}"
+fi
+
 # ── Load saved path ───────────────────────────────────────────────────────────
 SAVED_PATH=""
 if [[ -f "$PREFS_FILE" ]]; then
@@ -61,18 +124,6 @@ fi
 if [[ -n "$SAVED_PATH" ]] && has_doom3_data "$SAVED_PATH"; then
   echo "Using saved game data path: $SAVED_PATH"
   exec "$BINARY" +set fs_basepath "$SAVED_PATH" "$@"
-fi
-
-# ── Explicit path from command line ───────────────────────────────────────────
-if [[ $# -ge 1 ]]; then
-  GAME_DATA="${1%/}"
-  if ! has_doom3_data "$GAME_DATA"; then
-    echo "Warning: $GAME_DATA/base/pak000.pk4 not found — game data may be"
-    echo "         missing or the path is wrong."
-    echo "         Expected the top-level Doom 3 folder (the one containing base/)."
-  fi
-  echo "$GAME_DATA" > "$PREFS_FILE"
-  exec "$BINARY" +set fs_basepath "$GAME_DATA" "${@:2}"
 fi
 
 # ── Auto-discover ─────────────────────────────────────────────────────────────

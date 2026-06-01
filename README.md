@@ -93,6 +93,8 @@ builds dhewm3, and produces a `dhewm3.app` bundle + DMG in one step. To launch:
 ```sh
 ./scripts/macos-run.sh              # auto-discovers Steam / GOG game data
 ./scripts/macos-run.sh /path/to/doom3/   # or supply the path explicitly
+./scripts/macos-run.sh --show-path  # print saved game-data path
+./scripts/macos-run.sh --clear-path # clear saved game-data path
 ```
 
 For manual CMake invocations using named presets:
@@ -136,6 +138,8 @@ Install dependencies and build with the one-step setup script:
 ./scripts/linux-setup.sh           # auto-detects distro and CPU
 ./scripts/linux-run.sh             # auto-discovers Steam / GOG game data
 ./scripts/linux-run.sh /path/to/doom3/   # or supply path explicitly
+./scripts/linux-run.sh --show-path # print saved game-data path
+./scripts/linux-run.sh --clear-path # clear saved game-data path
 ```
 
 See [docs/LINUX.md](./docs/LINUX.md) for the full support matrix, CMake preset reference,
