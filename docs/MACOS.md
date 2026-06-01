@@ -343,7 +343,8 @@ plutil -lint dhewm3.app/Contents/Info.plist
 file dhewm3-universal.dmg
 ```
 
-Before publishing a release, complete every item in
+Before publishing a release, run `./scripts/macos-release-checklist.sh --all` and
+complete every remaining item in
 [MACOS-RELEASE-CHECKLIST.md](./MACOS-RELEASE-CHECKLIST.md).
 
 ---

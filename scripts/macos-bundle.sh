@@ -135,8 +135,7 @@ if command -v dylibbundler &>/dev/null; then
       --bundle-deps \
       --dest-dir "$FRAMEWORKS_DIR" \
       --install-path "@executable_path/../Frameworks" \
-      --overwrite-dir \
-      --quiet
+      --overwrite-dir
   done
 
   echo "    Homebrew dylibs bundled into $FRAMEWORKS_DIR"

@@ -1,8 +1,8 @@
 # User testing on MacBook Air M1 (Apple Silicon)
 
 This guide is for **testers** validating dhewm3 on a **MacBook Air M1** (or any Apple
-Silicon Mac). Maintainers: use [MACOS-RELEASE-CHECKLIST.md](./MACOS-RELEASE-CHECKLIST.md)
-before shipping a release.
+Silicon Mac). Maintainers: run `./scripts/macos-release-checklist.sh --all` and
+complete [MACOS-RELEASE-CHECKLIST.md](./MACOS-RELEASE-CHECKLIST.md) before shipping a release.
 
 ---
 
