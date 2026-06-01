@@ -54,20 +54,6 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-BINARY=""
-for BUILD_DIR in "$REPO_ROOT/build" "$REPO_ROOT/build-release"; do
-  if BINARY="$(macos_engine_binary "$BUILD_DIR")"; then
-    [[ "$BUILD_DIR" == *build-release* ]] && echo "Using release build: $BINARY"
-    break
-  fi
-done
-
-if [[ -z "$BINARY" ]]; then
-  echo "Error: dhewm3 binary not found under build/ or build-release/"
-  echo "Run ./scripts/macos-setup.sh first to build it."
-  exit 1
-fi
-
 # ── Saved path from first-run launcher (dhewm3.app) ──────────────────────────
 PREFS_FILE="$HOME/Library/Application Support/dhewm3/gamepath"
 
@@ -98,6 +84,20 @@ if [[ $# -ge 1 ]]; then
     +*|-*) is_explicit_path_arg=false ;;
     *)     is_explicit_path_arg=true ;;
   esac
+fi
+
+BINARY=""
+for BUILD_DIR in "$REPO_ROOT/build" "$REPO_ROOT/build-release"; do
+  if BINARY="$(macos_engine_binary "$BUILD_DIR")"; then
+    [[ "$BUILD_DIR" == *build-release* ]] && echo "Using release build: $BINARY"
+    break
+  fi
+done
+
+if [[ -z "$BINARY" ]]; then
+  echo "Error: dhewm3 binary not found under build/ or build-release/"
+  echo "Run ./scripts/macos-setup.sh first to build it."
+  exit 1
 fi
 
 # ── Explicit path ─────────────────────────────────────────────────────────────

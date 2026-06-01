@@ -27,23 +27,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Prefer build-release (portable / packaged binary) over dev build
-BINARY=""
-for candidate in \
-    "$REPO_ROOT/build-release/dhewm3" \
-    "$REPO_ROOT/build/dhewm3"; do
-  if [[ -x "$candidate" ]]; then
-    BINARY="$candidate"
-    break
-  fi
-done
-
-if [[ -z "$BINARY" ]]; then
-  echo "Error: dhewm3 binary not found in build/ or build-release/."
-  echo "Run ./scripts/linux-setup.sh first to build it."
-  exit 1
-fi
-
 # ── Persistent saved path ─────────────────────────────────────────────────────
 PREFS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dhewm3"
 PREFS_FILE="$PREFS_DIR/gamepath"
@@ -100,6 +83,23 @@ if [[ $# -ge 1 ]]; then
     +*|-*) is_explicit_path_arg=false ;;
     *)     is_explicit_path_arg=true ;;
   esac
+fi
+
+# Prefer build-release (portable / packaged binary) over dev build
+BINARY=""
+for candidate in \
+    "$REPO_ROOT/build-release/dhewm3" \
+    "$REPO_ROOT/build/dhewm3"; do
+  if [[ -x "$candidate" ]]; then
+    BINARY="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$BINARY" ]]; then
+  echo "Error: dhewm3 binary not found in build/ or build-release/."
+  echo "Run ./scripts/linux-setup.sh first to build it."
+  exit 1
 fi
 
 # ── Explicit path from command line ───────────────────────────────────────────
