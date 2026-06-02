@@ -2364,6 +2364,13 @@ static CVarOption gameOptions[] = {
 	CVarOption( "g_showPlayerShadow", "Show Player Model Shadow", OT_BOOL ),
 	CVarOption( "g_viewBobScale", "View Bob Scale (0 = no bob, 1 = default)", OT_FLOAT, 0.0f, 2.0f ),
 	CVarOption( "con_noPrint", "Print console output only to console, don't show when it's closed", OT_BOOL ),
+	CVarOption( "Camera" ),
+	CVarOption( "pm_thirdPerson", "Third-Person View", OT_BOOL ),
+	CVarOption( "pm_thirdPersonRange", "Camera Distance", OT_FLOAT, 0.0f, 256.0f ),
+	CVarOption( "pm_thirdPersonHeight", "Camera Height Offset", OT_FLOAT, -64.0f, 64.0f ),
+	CVarOption( "pm_thirdPersonAngle", "Camera Angle (0 = behind player, 180 = in front)", OT_FLOAT, 0.0f, 360.0f ),
+	CVarOption( "pm_thirdPersonClip", "Keep Camera Out of Walls", OT_BOOL ),
+	CVarOption( "pm_thirdPersonDeath", "Use Third-Person View on Death", OT_BOOL ),
 };
 
 static char playerNameBuf[128] = {};
@@ -2437,12 +2444,36 @@ void DrawGameOptionsMenu()
 	DrawOptionsRange( gameOptions, 4, 6 );
 	ImGui::EndDisabled();
 
-	DrawOptionsRange( gameOptions, 6, IM_ARRAYSIZE(gameOptions) );
+	// The last 7 entries are the Camera section: a "Camera" heading, the
+	// pm_thirdPerson toggle, four tuning options (range/height/angle/clip), and
+	// the pm_thirdPersonDeath toggle. Draw everything before it normally.
+	const int total = IM_ARRAYSIZE(gameOptions);
+	const int cameraStart = total - 7;
+	DrawOptionsRange( gameOptions, 6, cameraStart );
+
+	// Camera / third-person section. The tuning options also drive the death
+	// camera, so they stay enabled when either third-person mode is active.
+	gameOptions[cameraStart].Draw();      // "Camera" heading
+	gameOptions[cameraStart + 1].Draw();  // pm_thirdPerson toggle
+
+	const idCVar* thirdPerson = cvarSystem->Find( "pm_thirdPerson" );
+	const idCVar* thirdPersonDeath = cvarSystem->Find( "pm_thirdPersonDeath" );
+	const bool cameraActive = ( thirdPerson != nullptr && thirdPerson->GetBool() )
+	                       || ( thirdPersonDeath != nullptr && thirdPersonDeath->GetBool() );
+
+	if ( !cameraActive ) {
+		ImGui::TextDisabled( "Enable Third-Person View (or on death) above to adjust the camera." );
+	}
+	ImGui::BeginDisabled( !cameraActive );
+	DrawOptionsRange( gameOptions, cameraStart + 2, total - 1 ); // range, height, angle, clip
+	ImGui::EndDisabled();
+
+	gameOptions[total - 1].Draw();        // pm_thirdPersonDeath toggle
 
 	DrawRestoreDefaultsButton( "Restore Gameplay Defaults?",
 		"Reset all gameplay options on this page (difficulty, movement,\n"
-		"speed/stamina, weapons, saving, and visuals) to their original\n"
-		"Doom 3 defaults?\n\nYour player name will not be changed.",
+		"speed/stamina, weapons, saving, visuals, and camera) to their\n"
+		"original Doom 3 defaults?\n\nYour player name will not be changed.",
 		gameOptions, IM_ARRAYSIZE(gameOptions) );
 }
 
