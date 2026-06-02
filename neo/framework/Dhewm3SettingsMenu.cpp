@@ -1550,6 +1550,51 @@ static void DrawOptionsRange( CVarOption options[], int firstOption, int numOpti
 	}
 }
 
+// Resets every cvar-backed option in the array to its original Doom 3 default
+// value (the value it was first registered with) via the "reset" command.
+// Headings and other entries without a cvar name are skipped.
+static void ResetOptionsToDefaults( CVarOption options[], int numOptions )
+{
+	for ( int i = 0; i < numOptions; ++i ) {
+		if ( options[i].name != nullptr ) {
+			cmdSystem->BufferCommandText( CMD_EXEC_NOW, va( "reset %s\n", options[i].name ) );
+		}
+	}
+}
+
+// Draws a "Restore Doom 3 Defaults" button that, after a confirmation popup,
+// resets all the given options to their original Doom 3 values.
+// popupId must be unique per menu page.
+static void DrawRestoreDefaultsButton( const char* popupId, const char* confirmText,
+                                       CVarOption options[], int numOptions )
+{
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+
+	if ( ImGui::Button( "Restore Doom 3 Defaults" ) ) {
+		ImGui::OpenPopup( popupId );
+	}
+	AddTooltip( "Reset every option on this page to its original Doom 3 value" );
+
+	ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+	ImGui::SetNextWindowPos( center, ImGuiCond_Appearing, ImVec2( 0.5f, 0.5f ) );
+	if ( ImGui::BeginPopupModal( popupId, NULL, ImGuiWindowFlags_AlwaysAutoResize ) ) {
+		ImGui::TextUnformatted( confirmText );
+		ImGui::Spacing();
+		if ( ImGui::Button( "Restore Defaults", ImVec2( 160, 0 ) ) ) {
+			ResetOptionsToDefaults( options, numOptions );
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SetItemDefaultFocus();
+		ImGui::SameLine();
+		if ( ImGui::Button( "Cancel", ImVec2( 120, 0 ) ) ) {
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::EndPopup();
+	}
+}
+
 static CVarOption controlOptions[] = {
 
 	CVarOption("Mouse Settings"),
@@ -1630,6 +1675,11 @@ static void DrawControlOptionsMenu()
 	}
 	ImGui::EndDisabled();
 	ImGui::EndDisabled();
+
+	DrawRestoreDefaultsButton( "Restore Control Defaults?",
+		"Reset all mouse, keyboard, and gamepad options on this page\n"
+		"to their original Doom 3 defaults?",
+		controlOptions, IM_ARRAYSIZE(controlOptions) );
 }
 
 struct VidMode {
@@ -2388,6 +2438,12 @@ void DrawGameOptionsMenu()
 	ImGui::EndDisabled();
 
 	DrawOptionsRange( gameOptions, 6, IM_ARRAYSIZE(gameOptions) );
+
+	DrawRestoreDefaultsButton( "Restore Gameplay Defaults?",
+		"Reset all gameplay options on this page (difficulty, movement,\n"
+		"speed/stamina, weapons, saving, and visuals) to their original\n"
+		"Doom 3 defaults?\n\nYour player name will not be changed.",
+		gameOptions, IM_ARRAYSIZE(gameOptions) );
 }
 
 
