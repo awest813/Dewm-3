@@ -40,6 +40,11 @@ On top of everything in upstream dhewm3, this fork ships:
 - **`scripts/linux-package.sh`** — creates a portable tarball (and optionally an AppImage).
 - **`docs/LINUX.md`** — comprehensive Linux documentation covering the support matrix,
   game-data discovery, CMake presets, AppImage packaging, CI, and troubleshooting.
+- **Expanded in-game settings menu** (`F10`) — Doom 3 gameplay options (FOV, movement
+  speed, jump height, stamina, difficulty, view bob, per-axis mouse scale, and more) are
+  exposed directly in the menu (including a **third-person camera** with distance,
+  height, and angle controls), **persist across restarts**, and each page has a
+  **Restore Doom 3 Defaults** button to instantly return to stock behavior.
 
 Inherited from upstream dhewm3:
 
