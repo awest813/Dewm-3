@@ -20,6 +20,7 @@
 
 #include "renderer/tr_local.h" // render cvars
 #include "sound/snd_local.h" // sound cvars
+#include "framework/async/AsyncNetwork.h" // idAsyncNetwork::client.IsActive()
 
 extern const char* D3_GetGamepadStartButtonName();
 
@@ -108,6 +109,15 @@ static bool IsCancelKeyPressed() {
 	//       behaves the same, incl. the specialty that it can't be bound by the user
 	return IsKeyPressed( ImGuiKey_Escape ) || IsKeyPressed( ImGuiKey_GamepadFaceRight )
 	       || IsKeyPressed( ImGuiKey_GamepadStart );
+}
+
+// True when connected to a multiplayer server as a client. Mirrors the engine's
+// own guard in idInternalCVar::Set(): while this is true, CVAR_NETWORKSYNC cvars
+// are controlled by the server and can't be changed locally, so the menu greys
+// them out instead of letting the user poke values that get rejected or re-synced.
+static bool IsMpClient()
+{
+	return sessLocal.IsMultiplayer() && idAsyncNetwork::client.IsActive();
 }
 
 static const char* GetGamepadStartName() {
@@ -1484,6 +1494,12 @@ struct CVarOption {
 				ImGui::SeparatorText( label );
 			}
 		} else if (cvar != nullptr) {
+			// network-synced cvars are controlled by the server while connected
+			// as a multiplayer client, so grey them out (matches the engine guard)
+			const bool netLocked = ( cvar->GetFlags() & CVAR_NETWORKSYNC ) && IsMpClient();
+			if ( netLocked ) {
+				ImGui::BeginDisabled();
+			}
 			switch(type) {
 				case OT_BOOL:
 				{
@@ -1525,6 +1541,9 @@ struct CVarOption {
 					}
 					break;
 			}
+			if ( netLocked ) {
+				ImGui::EndDisabled();
+			}
 		}
 	}
 };
@@ -1554,9 +1573,16 @@ static void DrawOptionsRange( CVarOption options[], int firstOption, int numOpti
 // registered with) via the "reset" command. NULL names are ignored.
 static void ResetCvarByName( const char* name )
 {
-	if ( name != nullptr ) {
-		cmdSystem->BufferCommandText( CMD_EXEC_NOW, va( "reset %s\n", name ) );
+	if ( name == nullptr ) {
+		return;
 	}
+	// don't reset server-controlled cvars while a multiplayer client: the menu
+	// greys them out, and "reset" would otherwise bypass the engine's write guard.
+	const idCVar* cv = cvarSystem->Find( name );
+	if ( cv != nullptr && ( cv->GetFlags() & CVAR_NETWORKSYNC ) && IsMpClient() ) {
+		return;
+	}
+	cmdSystem->BufferCommandText( CMD_EXEC_NOW, va( "reset %s\n", name ) );
 }
 
 // Resets every cvar-backed option in the array to its original Doom 3 default.
@@ -2487,6 +2513,15 @@ void DrawGameOptionsMenu()
 	DrawPageIntro( "Gameplay, movement, weapon, save, and camera options. Changes are saved and persist "
 	               "between sessions; use Restore Doom 3 Defaults at the bottom to revert this page." );
 
+	if ( IsMpClient() ) {
+		ImGui::PushTextWrapPos( 0.0f );
+		ImGui::TextColored( ImVec4( 1.0f, 0.8f, 0.3f, 1.0f ),
+			"Connected to a multiplayer server: movement, stamina, and camera options are set by "
+			"the server and can't be changed here." );
+		ImGui::PopTextWrapPos();
+		ImGui::Spacing();
+	}
+
 	ImGui::Spacing();
 
 	ImGuiInputTextFlags flags = ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_CallbackCharFilter;
@@ -2533,7 +2568,7 @@ void DrawGameOptionsMenu()
 	const bool cameraActive = ( thirdPerson != nullptr && thirdPerson->GetBool() )
 	                       || ( thirdPersonDeath != nullptr && thirdPersonDeath->GetBool() );
 
-	if ( !cameraActive ) {
+	if ( !cameraActive && !IsMpClient() ) {
 		ImGui::TextDisabled( "Enable Third-Person View (or on death) above to adjust the camera." );
 	}
 	ImGui::BeginDisabled( !cameraActive );
