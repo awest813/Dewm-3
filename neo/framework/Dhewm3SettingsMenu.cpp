@@ -1954,6 +1954,9 @@ static void InitVideoOptionsMenu()
 
 static void DrawVideoOptionsMenu()
 {
+	DrawPageIntro( "Resolution, window mode, and renderer options. Resolution and antialiasing changes need "
+	               "Apply; everything below \"take effect immediately\" updates as you change it." );
+
 	ImGui::Spacing();
 	ImGui::Combo( "##qualPresets", &qualityPreset, "Low Quality\0Medium Quality\0High Quality\0Ultra Quality\0" );
 	AddTooltip( "com_machineSpec" );
@@ -2142,6 +2145,9 @@ static void DrawAudioOptionsMenu()
 		}
 		return;
 	}
+
+	DrawPageIntro( "Sound device, volume, and OpenAL/EFX audio effects. The sound device and EFX toggle "
+	               "apply after a restart; the rest update immediately." );
 
 	ImGui::SeparatorText( "Settings that require restarting dhewm3" );
 
@@ -2349,6 +2355,9 @@ static void DrawAudioOptionsMenu()
 		"original Doom 3 defaults?\n\nYour selected sound device is left\n"
 		"unchanged (changing it requires a restart anyway)." ) )
 	{
+		// keep this list in sync with the immediate-effect options drawn above.
+		// s_device and s_useEAXReverb are intentionally excluded (they need a
+		// restart and s_device keeps a separate menu mirror, selAlDevice).
 		static const char* const audioResetCvars[] = {
 			"s_volume_dB", "s_scaleDownAndClamp", "s_alOutputLimiter",
 			"s_alHRTF", "s_alReverbGain", "s_playDefaultSound",
@@ -2410,6 +2419,23 @@ static CVarOption gameOptions[] = {
 	CVarOption( "g_showPlayerShadow", "Show Player Model Shadow", OT_BOOL ),
 	CVarOption( "g_viewBobScale", "View Bob Scale (0 = no bob, 1 = default)", OT_FLOAT, 0.0f, 2.0f ),
 	CVarOption( "con_noPrint", "Print console output only to console, don't show when it's closed", OT_BOOL ),
+};
+
+// The third-person camera options live in their own array (instead of being
+// appended to gameOptions) so their layout is self-describing: the enum below
+// names each row, and the draw logic in DrawGameOptionsMenu uses those names
+// instead of fragile offsets into gameOptions. Reset and Init handle both arrays.
+enum cameraOption_t {
+	CAM_HEADING = 0,    // "Camera" separator
+	CAM_THIRDPERSON,    // pm_thirdPerson toggle
+	CAM_RANGE,          // pm_thirdPersonRange
+	CAM_HEIGHT,         // pm_thirdPersonHeight
+	CAM_ANGLE,          // pm_thirdPersonAngle
+	CAM_CLIP,           // pm_thirdPersonClip
+	CAM_DEATH,          // pm_thirdPersonDeath toggle
+};
+
+static CVarOption cameraOptions[] = {
 	CVarOption( "Camera" ),
 	CVarOption( "pm_thirdPerson", "Third-Person View", OT_BOOL ),
 	CVarOption( "pm_thirdPersonRange", "Camera Distance", OT_FLOAT, 0.0f, 256.0f ),
@@ -2434,6 +2460,7 @@ void InitGameOptionsMenu()
 	}
 
 	InitOptions( gameOptions, IM_ARRAYSIZE(gameOptions) );
+	InitOptions( cameraOptions, IM_ARRAYSIZE(cameraOptions) );
 }
 
 static int PlayerNameInputTextCallback(ImGuiInputTextCallbackData* data)
@@ -2493,20 +2520,16 @@ void DrawGameOptionsMenu()
 	DrawOptionsRange( gameOptions, 4, 6 );
 	ImGui::EndDisabled();
 
-	// The last 7 entries are the Camera section: a "Camera" heading, the
-	// pm_thirdPerson toggle, four tuning options (range/height/angle/clip), and
-	// the pm_thirdPersonDeath toggle. Draw everything before it normally.
-	const int total = IM_ARRAYSIZE(gameOptions);
-	const int cameraStart = total - 7;
-	DrawOptionsRange( gameOptions, 6, cameraStart );
+	DrawOptionsRange( gameOptions, 6, IM_ARRAYSIZE(gameOptions) );
 
-	// Camera / third-person section. The tuning options also drive the death
-	// camera, so they stay enabled when either third-person mode is active.
-	gameOptions[cameraStart].Draw();      // "Camera" heading
-	gameOptions[cameraStart + 1].Draw();  // pm_thirdPerson toggle
+	// Camera / third-person section (see cameraOptions / cameraOption_t above).
+	// The tuning options also drive the death camera, so they stay enabled when
+	// either third-person mode is active.
+	cameraOptions[CAM_HEADING].Draw();
+	cameraOptions[CAM_THIRDPERSON].Draw();
 
-	const idCVar* thirdPerson = cvarSystem->Find( "pm_thirdPerson" );
-	const idCVar* thirdPersonDeath = cvarSystem->Find( "pm_thirdPersonDeath" );
+	const idCVar* thirdPerson = cameraOptions[CAM_THIRDPERSON].cvar;
+	const idCVar* thirdPersonDeath = cameraOptions[CAM_DEATH].cvar;
 	const bool cameraActive = ( thirdPerson != nullptr && thirdPerson->GetBool() )
 	                       || ( thirdPersonDeath != nullptr && thirdPersonDeath->GetBool() );
 
@@ -2514,10 +2537,10 @@ void DrawGameOptionsMenu()
 		ImGui::TextDisabled( "Enable Third-Person View (or on death) above to adjust the camera." );
 	}
 	ImGui::BeginDisabled( !cameraActive );
-	DrawOptionsRange( gameOptions, cameraStart + 2, total - 1 ); // range, height, angle, clip
+	DrawOptionsRange( cameraOptions, CAM_RANGE, CAM_CLIP + 1 ); // range, height, angle, clip
 	ImGui::EndDisabled();
 
-	gameOptions[total - 1].Draw();        // pm_thirdPersonDeath toggle
+	cameraOptions[CAM_DEATH].Draw();
 
 	if ( DrawRestoreDefaultsButton( "Restore Gameplay Defaults?",
 		"Reset all gameplay options on this page (difficulty, movement,\n"
@@ -2525,6 +2548,7 @@ void DrawGameOptionsMenu()
 		"original Doom 3 defaults?\n\nYour player name will not be changed." ) )
 	{
 		ResetOptionsToDefaults( gameOptions, IM_ARRAYSIZE(gameOptions) );
+		ResetOptionsToDefaults( cameraOptions, IM_ARRAYSIZE(cameraOptions) );
 	}
 }
 
