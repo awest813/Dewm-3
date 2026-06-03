@@ -1550,23 +1550,36 @@ static void DrawOptionsRange( CVarOption options[], int firstOption, int numOpti
 	}
 }
 
-// Resets every cvar-backed option in the array to its original Doom 3 default
-// value (the value it was first registered with) via the "reset" command.
+// Resets the named cvar to its original Doom 3 default (the value it was first
+// registered with) via the "reset" command. NULL names are ignored.
+static void ResetCvarByName( const char* name )
+{
+	if ( name != nullptr ) {
+		cmdSystem->BufferCommandText( CMD_EXEC_NOW, va( "reset %s\n", name ) );
+	}
+}
+
+// Resets every cvar-backed option in the array to its original Doom 3 default.
 // Headings and other entries without a cvar name are skipped.
 static void ResetOptionsToDefaults( CVarOption options[], int numOptions )
 {
 	for ( int i = 0; i < numOptions; ++i ) {
-		if ( options[i].name != nullptr ) {
-			cmdSystem->BufferCommandText( CMD_EXEC_NOW, va( "reset %s\n", options[i].name ) );
-		}
+		ResetCvarByName( options[i].name );
 	}
 }
 
-// Draws a "Restore Doom 3 Defaults" button that, after a confirmation popup,
-// resets all the given options to their original Doom 3 values.
-// popupId must be unique per menu page.
-static void DrawRestoreDefaultsButton( const char* popupId, const char* confirmText,
-                                       CVarOption options[], int numOptions )
+// Resets every cvar in a plain name list to its original Doom 3 default.
+static void ResetCvarsByName( const char* const names[], int numNames )
+{
+	for ( int i = 0; i < numNames; ++i ) {
+		ResetCvarByName( names[i] );
+	}
+}
+
+// Draws a "Restore Doom 3 Defaults" button (separated from the options above it)
+// that opens a confirmation popup. Returns true on the frame the user confirms,
+// so the caller can perform the actual reset. popupId must be unique per page.
+static bool DrawRestoreDefaultsButton( const char* popupId, const char* confirmText )
 {
 	ImGui::Spacing();
 	ImGui::Separator();
@@ -1577,22 +1590,38 @@ static void DrawRestoreDefaultsButton( const char* popupId, const char* confirmT
 	}
 	AddTooltip( "Reset every option on this page to its original Doom 3 value" );
 
+	bool confirmed = false;
+
 	ImVec2 center = ImGui::GetMainViewport()->GetCenter();
 	ImGui::SetNextWindowPos( center, ImGuiCond_Appearing, ImVec2( 0.5f, 0.5f ) );
 	if ( ImGui::BeginPopupModal( popupId, NULL, ImGuiWindowFlags_AlwaysAutoResize ) ) {
 		ImGui::TextUnformatted( confirmText );
 		ImGui::Spacing();
-		if ( ImGui::Button( "Restore Defaults", ImVec2( 160, 0 ) ) ) {
-			ResetOptionsToDefaults( options, numOptions );
+		const float btnWidth = ImGui::GetFontSize() * 9.0f;
+		if ( ImGui::Button( "Restore Defaults", ImVec2( btnWidth, 0 ) ) ) {
+			confirmed = true;
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SetItemDefaultFocus();
 		ImGui::SameLine();
-		if ( ImGui::Button( "Cancel", ImVec2( 120, 0 ) ) ) {
+		if ( ImGui::Button( "Cancel", ImVec2( btnWidth * 0.6f, 0 ) ) || IsCancelKeyPressed() ) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
 	}
+
+	return confirmed;
+}
+
+// Dimmed, word-wrapped intro line shown at the top of a settings page.
+static void DrawPageIntro( const char* text )
+{
+	ImGui::PushStyleColor( ImGuiCol_Text, ImGui::GetStyleColorVec4( ImGuiCol_TextDisabled ) );
+	ImGui::PushTextWrapPos( 0.0f );
+	ImGui::TextUnformatted( text );
+	ImGui::PopTextWrapPos();
+	ImGui::PopStyleColor();
+	ImGui::Spacing();
 }
 
 static CVarOption controlOptions[] = {
@@ -1654,6 +1683,9 @@ static CVarOption controlOptions[] = {
 
 static void DrawControlOptionsMenu()
 {
+	DrawPageIntro( "Tune mouse, keyboard, and gamepad behavior. Hover the (?) next to an option for details. "
+	               "Key and button assignments live on the Control Bindings tab." );
+
 	DrawOptionsRange( controlOptions, 0, 12 );
 
 	const idCVar* useGamepad = cvarSystem->Find( "in_useGamepad" );
@@ -1676,10 +1708,12 @@ static void DrawControlOptionsMenu()
 	ImGui::EndDisabled();
 	ImGui::EndDisabled();
 
-	DrawRestoreDefaultsButton( "Restore Control Defaults?",
+	if ( DrawRestoreDefaultsButton( "Restore Control Defaults?",
 		"Reset all mouse, keyboard, and gamepad options on this page\n"
-		"to their original Doom 3 defaults?",
-		controlOptions, IM_ARRAYSIZE(controlOptions) );
+		"to their original Doom 3 defaults?" ) )
+	{
+		ResetOptionsToDefaults( controlOptions, IM_ARRAYSIZE(controlOptions) );
+	}
 }
 
 struct VidMode {
@@ -2309,6 +2343,18 @@ static void DrawAudioOptionsMenu()
 	} else {
 		AddTooltip( "Click to show information about the current OpenAL device" );
 	}
+
+	if ( DrawRestoreDefaultsButton( "Restore Audio Defaults?",
+		"Reset volume and audio-effect options on this page to their\n"
+		"original Doom 3 defaults?\n\nYour selected sound device is left\n"
+		"unchanged (changing it requires a restart anyway)." ) )
+	{
+		static const char* const audioResetCvars[] = {
+			"s_volume_dB", "s_scaleDownAndClamp", "s_alOutputLimiter",
+			"s_alHRTF", "s_alReverbGain", "s_playDefaultSound",
+		};
+		ResetCvarsByName( audioResetCvars, IM_ARRAYSIZE(audioResetCvars) );
+	}
 }
 
 static CVarOption gameOptions[] = {
@@ -2411,6 +2457,9 @@ static int PlayerNameInputTextCallback(ImGuiInputTextCallbackData* data)
 
 void DrawGameOptionsMenu()
 {
+	DrawPageIntro( "Gameplay, movement, weapon, save, and camera options. Changes are saved and persist "
+	               "between sessions; use Restore Doom 3 Defaults at the bottom to revert this page." );
+
 	ImGui::Spacing();
 
 	ImGuiInputTextFlags flags = ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_CallbackCharFilter;
@@ -2470,11 +2519,13 @@ void DrawGameOptionsMenu()
 
 	gameOptions[total - 1].Draw();        // pm_thirdPersonDeath toggle
 
-	DrawRestoreDefaultsButton( "Restore Gameplay Defaults?",
+	if ( DrawRestoreDefaultsButton( "Restore Gameplay Defaults?",
 		"Reset all gameplay options on this page (difficulty, movement,\n"
 		"speed/stamina, weapons, saving, visuals, and camera) to their\n"
-		"original Doom 3 defaults?\n\nYour player name will not be changed.",
-		gameOptions, IM_ARRAYSIZE(gameOptions) );
+		"original Doom 3 defaults?\n\nYour player name will not be changed." ) )
+	{
+		ResetOptionsToDefaults( gameOptions, IM_ARRAYSIZE(gameOptions) );
+	}
 }
 
 
@@ -2622,7 +2673,9 @@ void Com_DrawDhewm3SettingsMenu()
 		}
 		if (ImGui::BeginTabItem("Audio Options"))
 		{
-			ImGui::BeginChild( "audiochild" );
+			// match the other tabs: flatten keyboard/gamepad nav into this child.
+			// (DrawAudioOptionsMenu pushes its own item width, so don't use BeginTabChild)
+			ImGui::BeginChild( "audiochild", ImVec2(0, 0), 0, ImGuiWindowFlags_NavFlattened );
 			DrawAudioOptionsMenu();
 			ImGui::EndChild();
 			ImGui::EndTabItem();
