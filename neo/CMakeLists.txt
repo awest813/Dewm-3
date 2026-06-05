@@ -1309,8 +1309,18 @@ else()
 endif()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES LINK_FLAGS "${ldflags}")
 	# Prefer the distributable Info.plist (first-run launcher); fall back to legacy.
-	set(_DHEWM3_MACOS_PLIST "${CMAKE_SOURCE_DIR}/../dist/macosx/Info.plist")
-	if(EXISTS "${_DHEWM3_MACOS_PLIST}")
+	# The distributable plist names a launcher script (dhewm3-launcher) as its
+	# CFBundleExecutable — that launcher is assembled later by
+	# scripts/macos-bundle.sh.  The CMake-built bundle, however, contains only the
+	# engine binary itself, so we generate a build-time copy of the plist whose
+	# CFBundleExecutable matches the actual binary name.  This keeps the in-build
+	# build/dhewm3.app directly launchable (e.g. `open build/dhewm3.app`).
+	set(_DHEWM3_MACOS_PLIST_SRC "${CMAKE_SOURCE_DIR}/../dist/macosx/Info.plist")
+	if(EXISTS "${_DHEWM3_MACOS_PLIST_SRC}")
+		file(READ "${_DHEWM3_MACOS_PLIST_SRC}" _DHEWM3_PLIST_CONTENTS)
+		string(REPLACE "dhewm3-launcher" "${DHEWM3BINARY}" _DHEWM3_PLIST_CONTENTS "${_DHEWM3_PLIST_CONTENTS}")
+		set(_DHEWM3_MACOS_PLIST "${CMAKE_BINARY_DIR}/dhewm3-Info.plist")
+		file(WRITE "${_DHEWM3_MACOS_PLIST}" "${_DHEWM3_PLIST_CONTENTS}")
 		set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST "${_DHEWM3_MACOS_PLIST}")
 	else()
 		set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/sys/osx/Info.plist)
