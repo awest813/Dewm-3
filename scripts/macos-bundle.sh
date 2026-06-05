@@ -146,6 +146,14 @@ else
   echo "         libraries installed (openal-soft, sdl2, curl)."
 fi
 
+# ── Ad-hoc code-sign ──────────────────────────────────────────────────────────
+# dylibbundler rewrites the binaries' load commands, which invalidates the
+# linker's ad-hoc signature.  Without a valid signature the .app is killed on
+# launch on Apple Silicon, so re-sign every Mach-O before packaging.
+echo "==> Ad-hoc code-signing the .app…"
+macos_adhoc_sign_app "$APP_DIR"
+echo "    Ad-hoc signatures applied."
+
 # ── Create DMG ────────────────────────────────────────────────────────────────
 DMG_NAME="dhewm3-${ARCH_SUFFIX}.dmg"
 DMG_PATH="$REPO_ROOT/$DMG_NAME"

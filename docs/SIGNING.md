@@ -15,6 +15,16 @@ macOS Gatekeeper blocks apps from unidentified developers by default. Signing
 with an Apple Developer ID certificate (and notarizing with Apple) lets your
 users double-click the app and play immediately, with no security prompts.
 
+### Two levels of signing
+
+| Level | Applied by | Purpose |
+|-------|-----------|---------|
+| **Ad-hoc** (identity `-`) | `scripts/macos-bundle.sh`, automatically, on every build | Makes the binaries *runnable* on Apple Silicon. The arm64 kernel kills any unsigned Mach-O on launch (`Killed: 9`), and `dylibbundler` invalidates the linker's signature when it rewrites load commands, so the bundle must be re-signed. Ad-hoc signing does **not** satisfy Gatekeeper. |
+| **Developer ID + notarization** | `release.yml`, only when the secrets below are configured | Makes the app *trusted* — it launches with no "unidentified developer" prompt. Re-signs on top of the ad-hoc signature with `--deep --force`. |
+
+Ad-hoc signing requires no Apple account and is always on. Everything below is
+only needed for the optional Gatekeeper-trusted release artifact.
+
 ---
 
 ## Prerequisites
