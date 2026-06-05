@@ -87,6 +87,46 @@ macos_copy_game_dylibs() {
   done
 }
 
+# Ad-hoc code-sign every Mach-O binary inside APP_DIR.
+#
+# On Apple Silicon (the primary target) the kernel refuses to run any
+# executable or dylib that lacks a valid code signature ("Killed: 9").  The
+# linker applies an automatic ad-hoc signature on arm64, but dylibbundler runs
+# install_name_tool to rewrite load commands, which invalidates that signature.
+# We must therefore re-sign after bundling.  Signing is done innermost-first
+# (nested Frameworks dylibs, then game dylibs, then the engine) because signing
+# an outer binary seals the contents it loads.
+#
+# This produces an ad-hoc signature (identity "-"), which is enough to launch
+# locally and via the (unsigned) release DMGs.  The Developer ID release path
+# re-signs with --deep --force on top of this, so there is no conflict.
+macos_adhoc_sign_app() {
+  local app_dir="$1"
+  if ! command -v codesign &>/dev/null; then
+    echo "WARNING: codesign not found — skipping ad-hoc signing." >&2
+    echo "         The .app may be killed on launch on Apple Silicon." >&2
+    return 0
+  fi
+
+  local lib
+  # 1. Nested dependency dylibs bundled by dylibbundler.
+  if [[ -d "$app_dir/Contents/Frameworks" ]]; then
+    while IFS= read -r lib; do
+      codesign --force --sign - "$lib"
+    done < <(find "$app_dir/Contents/Frameworks" -type f -name "*.dylib")
+  fi
+
+  # 2. Game module dylibs sitting next to the engine (base.dylib, d3xp.dylib, …).
+  while IFS= read -r lib; do
+    codesign --force --sign - "$lib"
+  done < <(find "$app_dir/Contents/MacOS" -maxdepth 1 -type f -name "*.dylib")
+
+  # 3. The engine binary itself, last.
+  if [[ -f "$app_dir/Contents/MacOS/dhewm3" ]]; then
+    codesign --force --sign - "$app_dir/Contents/MacOS/dhewm3"
+  fi
+}
+
 # Stage engine binary (as dhewm3) and game dylibs into OUT_DIR (for CI artifacts).
 macos_stage_engine_artifacts() {
   local build_dir="$1"

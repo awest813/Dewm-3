@@ -170,6 +170,17 @@ else
   fail "No *.dylib in .app/Contents/MacOS/"
 fi
 
+# Every Mach-O must carry a valid signature (ad-hoc is fine) or Apple Silicon
+# kills it on launch.  dylibbundler invalidates the linker's signature, so
+# macos-bundle.sh re-signs — verify that here to catch regressions.
+if [[ -x "$APP/Contents/MacOS/dhewm3" ]]; then
+  if codesign --verify --strict "$APP/Contents/MacOS/dhewm3" &>/dev/null; then
+    pass "Engine binary has a valid code signature (ad-hoc or better)"
+  else
+    fail "Engine binary lacks a valid signature — will be killed on Apple Silicon"
+  fi
+fi
+
 # ── §3 DMG ────────────────────────────────────────────────────────────────────
 section "§3 — DMG"
 
