@@ -66,23 +66,22 @@ if [[ "$ARCH_SUFFIX" == "x86_64" ]]; then
   MIN_MACOS="10.15"
 fi
 
-python3 -c "
-import re
-with open('$APP_DIR/Contents/Info.plist', 'r') as f:
-    content = f.read()
-if '$GIT_VERSION':
-    content = re.sub(
-        r'(<key>CFBundleVersion</key>\s*<string>)[^<]*(</string>)',
-        r'\g<1>${GIT_VERSION}\g<2>', content)
-    content = re.sub(
-        r'(<key>CFBundleShortVersionString</key>\s*<string>)[^<]*(</string>)',
-        r'\g<1>${GIT_VERSION}\g<2>', content)
-content = re.sub(
-    r'(<key>LSMinimumSystemVersion</key>\s*<string>)[^<]*(</string>)',
-    r'\g<1>${MIN_MACOS}\g<2>', content)
-with open('$APP_DIR/Contents/Info.plist', 'w') as f:
-    f.write(content)
-" 2>/dev/null || true
+# Edit the plist with PlistBuddy, which ships with every macOS (unlike python3,
+# which on a clean install is only a stub that prompts for the Command Line
+# Tools).  All three keys already exist in dist/macosx/Info.plist.
+PLIST_BUDDY="/usr/libexec/PlistBuddy"
+PLIST_OUT="$APP_DIR/Contents/Info.plist"
+plist_set() { "$PLIST_BUDDY" -c "Set :$1 $2" "$PLIST_OUT" 2>/dev/null; }
+
+if [[ -x "$PLIST_BUDDY" ]]; then
+  if [[ -n "$GIT_VERSION" ]]; then
+    plist_set CFBundleVersion "$GIT_VERSION"
+    plist_set CFBundleShortVersionString "$GIT_VERSION"
+  fi
+  plist_set LSMinimumSystemVersion "$MIN_MACOS"
+else
+  echo "    WARNING: PlistBuddy not found — Info.plist version/min-version left unchanged."
+fi
 
 if [[ -n "$GIT_VERSION" ]]; then
   echo "    Version set to: $GIT_VERSION  (min macOS: $MIN_MACOS)"
