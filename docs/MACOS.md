@@ -342,7 +342,7 @@ lipo -info "$ENGINE"
 # Both x86_64 and arm64 must be listed.
 
 plutil -lint dhewm3.app/Contents/Info.plist
-file dhewm3-universal.dmg
+file dhewm3-macos-universal.dmg
 ```
 
 Before publishing a release, run `./scripts/macos-release-checklist.sh --all` and
@@ -362,6 +362,7 @@ complete every remaining item in
 | `dhewm3 -h` exits non-zero | Expected — dhewm3 exits with code 1 after printing help | This is normal; check the output, not the exit code. |
 | `pak*.pk4 not found` at startup | `fs_basepath` points to wrong directory | Directory must contain `base/pak000.pk4`. Run `./scripts/macos-run.sh /correct/path/` |
 | Game crashes immediately on arm64 | OpenAL Soft from Apple's SDK (not Homebrew) linked in | `brew install openal-soft`; confirm with `otool -L build/dhewm3.app/Contents/MacOS/dhewm3 \| grep openal` that it links Homebrew's copy, not `/System/Library/…`. |
+| `Library not loaded: @executable_path/../Frameworks/libopenal…` on launch | `dylibbundler` ran per-dylib with `--overwrite-dir`, wiping engine deps from `Contents/Frameworks/` | Re-run `./scripts/macos-bundle.sh` (current script bundles engine + game modules in one pass). |
 | Game starts but cannot load mods / expansion | `base.dylib` missing from `.app` | Re-run `./scripts/macos-bundle.sh`; game modules live in `dhewm3.app/Contents/MacOS/*.dylib`. |
 | Universal build missing x86_64 slice | x86_64 Homebrew deps absent | Use the `release.yml` CI workflow which assembles universal binaries via `lipo` from separate per-arch builds — no dual-Homebrew setup required. |
 | Folder-picker dialog appears every launch | Saved path (`~/Library/Application Support/dhewm3/gamepath`) missing or stale | Pick the correct folder in the dialog, or: `echo /path/to/doom3 > ~/Library/Application\ Support/dhewm3/gamepath` |

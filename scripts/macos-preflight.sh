@@ -133,6 +133,11 @@ if [[ "$CHECK_BUILD" -eq 1 ]]; then
     else
       warn "No *.dylib in .app — base game may not load (re-run macos-bundle.sh)"
     fi
+    if [[ -f "$APP/Contents/Resources/dhewm3.icns" ]]; then
+      pass "App icon present (dhewm3.icns)"
+    else
+      warn "No app icon in .app — re-run macos-bundle.sh"
+    fi
   else
     fail "dhewm3.app not found — run: ./scripts/macos-setup.sh"
   fi
@@ -173,11 +178,11 @@ if [[ "$CHECK_BUILD" -eq 1 ]]; then
     fi
   fi
 
-  DMG_COUNT="$(find "$REPO_ROOT" -maxdepth 1 -name 'dhewm3-*.dmg' 2>/dev/null | wc -l | tr -d ' ')"
+  DMG_COUNT="$(find "$REPO_ROOT" -maxdepth 1 -name 'dhewm3-macos-*.dmg' 2>/dev/null | wc -l | tr -d ' ')"
   if [[ "$DMG_COUNT" -gt 0 ]]; then
-    pass "DMG present in repo root ($(find "$REPO_ROOT" -maxdepth 1 -name 'dhewm3-*.dmg' -print | tr '\n' ' '))"
+    pass "DMG present in repo root ($(find "$REPO_ROOT" -maxdepth 1 -name 'dhewm3-macos-*.dmg' -print | tr '\n' ' '))"
   else
-    warn "No dhewm3-*.dmg in repo root (created by macos-setup.sh)"
+    warn "No dhewm3-macos-*.dmg in repo root (created by macos-setup.sh)"
   fi
 fi
 

@@ -46,7 +46,7 @@ CI runs the default checks on every macOS workflow build (no game data required)
 
 ## 3 — DMG
 
-- [ ] `dhewm3-<arch>.dmg` (or `dhewm3-universal.dmg`) is created in the repo root.
+- [ ] `dhewm3-macos-<arch>.dmg` (or `dhewm3-macos-universal.dmg`) is created in the repo root.
 - [ ] The DMG mounts cleanly when double-clicked (no corruption warnings).
 - [ ] The DMG contains `dhewm3.app` and an `/Applications` symlink for drag-and-drop install.
 - [ ] The DMG unmounts cleanly.
@@ -80,7 +80,7 @@ CI runs the default checks on every macOS workflow build (no game data required)
 - [ ] `./scripts/macos-setup.sh universal` completes without errors.
 - [ ] `file build-release/dhewm3.app/Contents/MacOS/dhewm3` shows `Mach-O universal binary with 2 architectures`.
 - [ ] `lipo -info build-release/dhewm3.app/Contents/MacOS/dhewm3` lists both `x86_64` and `arm64`.
-- [ ] `dhewm3-universal.dmg` is created and mounts cleanly.
+- [ ] `dhewm3-macos-universal.dmg` is created and mounts cleanly.
 
 ## 7 — Code signing & notarization (signed release only)
 

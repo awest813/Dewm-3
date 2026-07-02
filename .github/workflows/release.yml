@@ -67,8 +67,15 @@ jobs:
             codesign --verify --strict "$LIB"
           done
 
-      - name: Rename DMG with arch suffix
-        run: mv dhewm3-${{ matrix.arch }}.dmg dhewm3-macos-${{ matrix.arch }}.dmg
+      - name: Verify code signature
+        run: |
+          # dylibbundler invalidates the linker's ad-hoc signature; macos-bundle.sh
+          # re-signs. A missing/invalid signature means "Killed: 9" on Apple Silicon.
+          codesign --verify --strict --verbose=2 dhewm3.app/Contents/MacOS/dhewm3
+          for LIB in dhewm3.app/Contents/MacOS/*.dylib dhewm3.app/Contents/Frameworks/*.dylib; do
+            [[ -f "$LIB" ]] || continue
+            codesign --verify --strict "$LIB"
+          done
 
       # Upload engine + game dylibs for the universal lipo job.
       - name: Stage engine artifacts (for universal assembly)
@@ -150,9 +157,6 @@ jobs:
         run: |
           chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh scripts/macos-lib.sh
           ./scripts/macos-bundle.sh build-universal
-          # macos-bundle.sh names the DMG after the detected arch; rename it.
-          mv dhewm3-universal.dmg dhewm3-macos-universal.dmg 2>/dev/null || \
-            mv dhewm3-*.dmg dhewm3-macos-universal.dmg
 
       - name: Verify code signature (universal)
         run: |

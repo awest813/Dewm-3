@@ -67,7 +67,7 @@ cd Dewm-3
 Artifacts after setup:
 
 - `dhewm3.app` — double-click to test the real user flow  
-- `dhewm3-arm64.dmg` — optional; test install via DMG drag-to-Applications  
+- `dhewm3-macos-arm64.dmg` — optional; test install via DMG drag-to-Applications  
 
 ---
 
@@ -92,7 +92,7 @@ Copy this into your notes or a GitHub issue.
 
 ### Optional
 
-- [ ] Install from `dhewm3-arm64.dmg` into Applications and repeat first-launch flow
+- [ ] Install from `dhewm3-macos-arm64.dmg` into Applications and repeat first-launch flow
 - [ ] Move Doom 3 to an external drive (Steam library) and confirm rediscovery or picker
 
 ---

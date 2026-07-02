@@ -1,0 +1,106 @@
+name: macOS bug report
+description: Report a problem running dhewm3 on macOS (Apple Silicon or Intel)
+title: "[macOS] "
+labels: ["macos"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping test dhewm3 on macOS. Please fill in as much as you can.
+        See [docs/MACOS.md](https://github.com/awest813/Dewm-3/blob/master/docs/MACOS.md) for setup help.
+
+  - type: dropdown
+    id: how-run
+    attributes:
+      label: How did you run dhewm3?
+      options:
+        - Pre-built DMG from Releases
+        - Built from source (./scripts/macos-setup.sh)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: mac-model
+    attributes:
+      label: Mac model and chip
+      description: e.g. MacBook Air M1 8 GB, Mac mini M2, iMac Intel 2019
+      placeholder: MacBook Air M1
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Output of `sw_vers -productVersion`
+      placeholder: "14.5"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dmg-type
+    attributes:
+      label: DMG / build type (if applicable)
+      options:
+        - dhewm3-macos-arm64.dmg
+        - dhewm3-macos-x86_64.dmg
+        - dhewm3-macos-universal.dmg
+        - dhewm3-macos-universal-signed.dmg
+        - Source build (arm64)
+        - Source build (x86_64)
+        - Source build (universal)
+        - Not sure
+    validations:
+      required: false
+
+  - type: dropdown
+    id: game-data
+    attributes:
+      label: Doom 3 game data source
+      options:
+        - Steam (Mac)
+        - Steam (library on external drive)
+        - GOG
+        - Other / manual install
+        - Do not have game data yet
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did before the problem occurred
+      placeholder: |
+        1. Downloaded dhewm3-macos-arm64.dmg
+        2. Dragged to Applications
+        3. Right-click → Open on first launch
+        4. Selected Steam Doom 3 folder
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Diagnostic output (optional)
+      description: |
+        If you built from source, paste output of:
+        `./scripts/macos-preflight.sh --build --verbose`
+      render: shell
+    validations:
+      required: false
