@@ -7,7 +7,7 @@
 #
 # Output:
 #   dhewm3.app/           — Mac application bundle (in repo root)
-#   dhewm3-<arch>.dmg     — drag-and-drop disk image for distribution
+#   dhewm3-macos-<arch>.dmg — drag-and-drop disk image for distribution
 #
 # Homebrew dylibs (openal-soft, SDL2, curl) are bundled into
 # dhewm3.app/Contents/Frameworks/ so the .app is fully self-contained and
@@ -43,7 +43,7 @@ else
   ARCH_SUFFIX="x86_64"
 fi
 
-echo "==> Assembling dhewm3.app (arch: $ARCH_SUFFIX)…"
+echo "==> Assembling dhewm3.app (arch: ${ARCH_SUFFIX})…"
 
 # ── Build .app directory tree ─────────────────────────────────────────────────
 if [[ -z "$APP_DIR" || "$APP_DIR" == "/" ]]; then
@@ -130,24 +130,21 @@ mkdir -p "$FRAMEWORKS_DIR"
 
 if command -v dylibbundler &>/dev/null; then
   echo "==> Bundling Homebrew dylibs with dylibbundler…"
-  # Bundle deps for the engine binary
-  dylibbundler \
-    --fix-file "$APP_DIR/Contents/MacOS/dhewm3" \
-    --bundle-deps \
-    --dest-dir "$FRAMEWORKS_DIR" \
-    --install-path "@executable_path/../Frameworks" \
+  # Bundle all Mach-O targets in one pass.  Using --overwrite-dir per file would
+  # erase Contents/Frameworks/ each time, dropping openal/SDL2/curl deps bundled
+  # for the engine when we process base.dylib / d3xp.dylib afterward.
+  DYLIB_ARGS=(
+    --bundle-deps
+    --dest-dir "$FRAMEWORKS_DIR"
+    --install-path "@executable_path/../Frameworks"
     --overwrite-dir
-
-  # Bundle deps for any game .dylibs (base.dylib, d3xp.dylib, …)
+    --fix-file "$APP_DIR/Contents/MacOS/dhewm3"
+  )
   for GAME_LIB in "$APP_DIR/Contents/MacOS/"*.dylib; do
     [[ -f "$GAME_LIB" ]] || continue
-    dylibbundler \
-      --fix-file "$GAME_LIB" \
-      --bundle-deps \
-      --dest-dir "$FRAMEWORKS_DIR" \
-      --install-path "@executable_path/../Frameworks" \
-      --overwrite-dir
+    DYLIB_ARGS+=(--fix-file "$GAME_LIB")
   done
+  dylibbundler "${DYLIB_ARGS[@]}"
 
   echo "    Homebrew dylibs bundled into $FRAMEWORKS_DIR"
 else
@@ -169,7 +166,7 @@ echo "    Ad-hoc signatures applied."
 DMG_NAME="dhewm3-macos-${ARCH_SUFFIX}.dmg"
 DMG_PATH="$REPO_ROOT/$DMG_NAME"
 
-echo "==> Creating $DMG_NAME…"
+echo "==> Creating ${DMG_NAME}…"
 
 # Temporary staging folder for the DMG contents
 STAGING="$(mktemp -d)"
@@ -190,5 +187,5 @@ echo "==> Done."
 echo "    App bundle : $APP_DIR"
 echo "    Disk image : $DMG_PATH"
 echo ""
-echo "To distribute to users: share $DMG_NAME."
+echo "To distribute to users: share ${DMG_NAME}."
 echo "Users open the DMG, drag dhewm3 to Applications, and double-click to play."

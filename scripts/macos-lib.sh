@@ -125,6 +125,9 @@ macos_adhoc_sign_app() {
   if [[ -f "$app_dir/Contents/MacOS/dhewm3" ]]; then
     codesign --force --sign - "$app_dir/Contents/MacOS/dhewm3"
   fi
+
+  # 4. Seal the bundle (covers the launcher script and any stragglers).
+  codesign --force --sign - "$app_dir"
 }
 
 # Stage engine binary (as dhewm3) and game dylibs into OUT_DIR (for CI artifacts).

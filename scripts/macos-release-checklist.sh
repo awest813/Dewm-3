@@ -176,6 +176,18 @@ else
   skip "No app icon — Finder shows generic icon"
 fi
 
+FRAMEWORKS="$APP/Contents/Frameworks"
+if [[ -d "$FRAMEWORKS" ]]; then
+  FW_LIST="$(find "$FRAMEWORKS" -maxdepth 1 -name '*.dylib' -print 2>/dev/null || true)"
+  if echo "$FW_LIST" | grep -qi openal && echo "$FW_LIST" | grep -qi SDL2; then
+    pass "Bundled Frameworks include openal + SDL2 (dylibbundler single-pass)"
+  else
+    fail "Frameworks missing openal or SDL2 — dylibbundler may have wiped deps"
+  fi
+else
+  skip "No Contents/Frameworks — dylibbundler not run or Homebrew-only build"
+fi
+
 # Every Mach-O must carry a valid signature (ad-hoc is fine) or Apple Silicon
 # kills it on launch.  dylibbundler invalidates the linker's signature, so
 # macos-bundle.sh re-signs — verify that here to catch regressions.

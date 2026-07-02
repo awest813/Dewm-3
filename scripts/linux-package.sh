@@ -91,7 +91,7 @@ README
 TARBALL_NAME="dhewm3-linux-${ARCH}.tar.gz"
 TARBALL_PATH="$REPO_ROOT/$TARBALL_NAME"
 
-echo "==> Creating $TARBALL_NAME…"
+echo "==> Creating ${TARBALL_NAME}…"
 tar -czf "$TARBALL_PATH" -C "$STAGING" dhewm3
 
 echo ""
