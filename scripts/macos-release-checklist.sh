@@ -170,6 +170,12 @@ else
   fail "No *.dylib in .app/Contents/MacOS/"
 fi
 
+if [[ -f "$APP/Contents/Resources/dhewm3.icns" ]]; then
+  pass "App icon present (dhewm3.icns)"
+else
+  skip "No app icon — Finder shows generic icon"
+fi
+
 # Every Mach-O must carry a valid signature (ad-hoc is fine) or Apple Silicon
 # kills it on launch.  dylibbundler invalidates the linker's signature, so
 # macos-bundle.sh re-signs — verify that here to catch regressions.
@@ -185,7 +191,7 @@ fi
 section "§3 — DMG"
 
 DMG=""
-for candidate in "$REPO_ROOT"/dhewm3-*.dmg; do
+for candidate in "$REPO_ROOT"/dhewm3-macos-*.dmg "$REPO_ROOT"/dhewm3-*.dmg; do
   [[ -f "$candidate" ]] || continue
   DMG="$candidate"
   break
@@ -194,7 +200,7 @@ done
 if [[ -n "$DMG" ]]; then
   pass "DMG found: $(basename "$DMG")"
 else
-  fail "No dhewm3-*.dmg in repo root"
+  fail "No dhewm3-macos-*.dmg in repo root"
 fi
 
 if [[ "$CHECK_DMG_MOUNT" -eq 1 && -n "$DMG" ]]; then
@@ -301,11 +307,11 @@ if [[ "$CHECK_UNIVERSAL" -eq 1 ]]; then
     fail "No build-release engine — run: ./scripts/macos-setup.sh universal"
   fi
 
-  UNI_DMG="$REPO_ROOT/dhewm3-universal.dmg"
+  UNI_DMG="$REPO_ROOT/dhewm3-macos-universal.dmg"
   if [[ -f "$UNI_DMG" ]]; then
-    pass "dhewm3-universal.dmg present"
+    pass "dhewm3-macos-universal.dmg present"
   else
-    fail "dhewm3-universal.dmg missing"
+    fail "dhewm3-macos-universal.dmg missing"
   fi
 else
   section "§6 — Universal binary (release)"

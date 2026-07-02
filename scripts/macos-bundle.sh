@@ -102,9 +102,21 @@ cp "$REPO_ROOT/scripts/macos-lib.sh" "$APP_DIR/Contents/MacOS/macos-lib.sh"
 chmod +x "$APP_DIR/Contents/MacOS/dhewm3-launcher"
 chmod +x "$APP_DIR/Contents/MacOS/dhewm3"
 
-# icns placeholder — use a simple copy from dist/ if it exists, otherwise skip
-if [[ -f "$REPO_ROOT/dist/macosx/dhewm3.icns" ]]; then
-  cp "$REPO_ROOT/dist/macosx/dhewm3.icns" "$APP_DIR/Contents/Resources/dhewm3.icns"
+# App icon — dist/macosx/dhewm3.icns is preferred; fall back to the upstream
+# Doom3.icns shipped with the engine sources so Finder shows a real icon.
+ICON_SRC=""
+for candidate in \
+  "$REPO_ROOT/dist/macosx/dhewm3.icns" \
+  "$REPO_ROOT/neo/sys/osx/Doom3.icns"; do
+  if [[ -f "$candidate" ]]; then
+    ICON_SRC="$candidate"
+    break
+  fi
+done
+if [[ -n "$ICON_SRC" ]]; then
+  cp "$ICON_SRC" "$APP_DIR/Contents/Resources/dhewm3.icns"
+else
+  echo "    WARNING: No .icns found — app will use the generic macOS icon."
 fi
 
 echo "    $APP_DIR assembled."
@@ -154,7 +166,7 @@ macos_adhoc_sign_app "$APP_DIR"
 echo "    Ad-hoc signatures applied."
 
 # ── Create DMG ────────────────────────────────────────────────────────────────
-DMG_NAME="dhewm3-${ARCH_SUFFIX}.dmg"
+DMG_NAME="dhewm3-macos-${ARCH_SUFFIX}.dmg"
 DMG_PATH="$REPO_ROOT/$DMG_NAME"
 
 echo "==> Creating $DMG_NAME…"

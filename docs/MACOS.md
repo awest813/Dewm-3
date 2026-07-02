@@ -342,7 +342,7 @@ lipo -info "$ENGINE"
 # Both x86_64 and arm64 must be listed.
 
 plutil -lint dhewm3.app/Contents/Info.plist
-file dhewm3-universal.dmg
+file dhewm3-macos-universal.dmg
 ```
 
 Before publishing a release, run `./scripts/macos-release-checklist.sh --all` and
