@@ -1136,6 +1136,9 @@ void RB_STD_T_RenderShaderPasses( const drawSurf_t *surf ) {
 			}
 		}
 
+#ifdef __EMSCRIPTEN__
+		R_GLES_SetStageColor( color, pStage->vertexColor );
+#endif
 		// bind the texture
 		RB_BindVariableStageImage( &pStage->texture, regs );
 
@@ -1277,6 +1280,10 @@ static void RB_T_Shadow( const drawSurf_t *surf ) {
 	if ( !tri->shadowCache ) {
 		return;
 	}
+
+#ifdef __EMSCRIPTEN__
+	R_GLES_SetShadowMode(tri->shadowVertexes == NULL);
+#endif
 
 	qglVertexPointer( 4, GL_FLOAT, sizeof( shadowCache_t ), vertexCache.Position(tri->shadowCache) );
 

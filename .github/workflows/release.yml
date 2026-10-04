@@ -22,11 +22,11 @@ jobs:
       matrix:
         include:
           - name: arm64 (Apple Silicon)
-            runner: macos-14
+            runner: macos-15
             preset: macos-arm64
             arch: arm64
           - name: x86_64 (Intel)
-            runner: macos-13
+            runner: macos-15-intel
             preset: macos-intel
             arch: x86_64
 
@@ -49,23 +49,12 @@ jobs:
           BINARY="build/dhewm3.app/Contents/MacOS/dhewm3"
           file "$BINARY"
           otool -L "$BINARY" | grep -E 'openal|SDL2|curl' || true
-          "$BINARY" -h > smoke.log 2>&1 || true
-          head -n 20 smoke.log
+          bash scripts/check-engine.sh "$BINARY"
 
       - name: Assemble .app and DMG
         run: |
           chmod +x scripts/macos-bundle.sh scripts/macos-firstrun.sh scripts/macos-lib.sh
           ./scripts/macos-bundle.sh build
-
-      - name: Verify code signature
-        run: |
-          # dylibbundler invalidates the linker's ad-hoc signature; macos-bundle.sh
-          # re-signs. A missing/invalid signature means "Killed: 9" on Apple Silicon.
-          codesign --verify --strict --verbose=2 dhewm3.app/Contents/MacOS/dhewm3
-          for LIB in dhewm3.app/Contents/MacOS/*.dylib dhewm3.app/Contents/Frameworks/*.dylib; do
-            [[ -f "$LIB" ]] || continue
-            codesign --verify --strict "$LIB"
-          done
 
       - name: Verify code signature
         run: |
@@ -100,7 +89,7 @@ jobs:
   # ── Universal binary via lipo ────────────────────────────────────────────────
   universal:
     name: Universal DMG (lipo)
-    runs-on: macos-14
+    runs-on: macos-15
     needs: build
 
     steps:

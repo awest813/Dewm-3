@@ -3545,6 +3545,9 @@ idFileSystemLocal::StartBackgroundReadThread
 =================
 */
 void idFileSystemLocal::StartBackgroundDownloadThread() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return; // MEMFS reads are synchronous; no background worker is needed
+#endif
 	if ( !backgroundThread.threadHandle ) {
 		Sys_CreateThread( BackgroundDownloadThread, &backgroundThread_exit, backgroundThread, "backgroundDownload" );
 	} else {
@@ -3558,6 +3561,16 @@ idFileSystemLocal::BackgroundDownload
 =================
 */
 void idFileSystemLocal::BackgroundDownload( backgroundDownload_t *bgl ) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	if (bgl->opcode == DLTYPE_FILE) {
+		bgl->f->Seek(bgl->file.position, FS_SEEK_SET);
+		bgl->f->Read(bgl->file.buffer, bgl->file.length);
+	} else {
+		bgl->url.status = DL_FAILED;
+	}
+	bgl->completed = true;
+	return;
+#endif
 	if ( bgl->opcode == DLTYPE_FILE ) {
 		if ( dynamic_cast<idFile_Permanent *>(bgl->f) ) {
 			// add the bgl to the background download list

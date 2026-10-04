@@ -3,6 +3,20 @@
   "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
   "configurePresets": [
     {
+      "name": "windows-x64",
+      "displayName": "Windows x64 (Visual Studio)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/../build-windows",
+      "cacheVariables": {
+        "DHEWM3LIBS": "${sourceDir}/../.deps/dhewm3-libs/x86_64-w64-mingw32"
+      }
+    },
+    {
       "name": "linux-x86_64",
       "displayName": "Linux – x86_64 (64-bit Intel/AMD)",
       "description": "Standard x86_64 Linux build. Default for most desktop and server Linux hosts.",
@@ -93,9 +107,34 @@
         "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
         "REPRODUCIBLE_BUILD": "ON"
       }
+    },
+    {
+      "name": "web-wasm",
+      "displayName": "Web – optimised WebAssembly via Emscripten",
+      "description": "Emscripten port with WebGL2/GLES3 compat layer (renderer/qgl_gles.h + tr_gles.cpp). Requires emsdk activated (EMSDK env var). HARDLINK_GAME=ON (no dlopen on web), base game only, ImGui/tools/dedicated off. Rendering not yet visually correct; see docs/WEB.md.",
+      "binaryDir": "${sourceDir}/../build-web",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HARDLINK_GAME": "ON",
+        "BASE": "ON",
+        "D3XP": "OFF",
+        "CORE": "ON",
+        "DEDICATED": "OFF",
+        "IMGUI": "OFF",
+        "SDL2": "ON"
+      }
+    },
+    {
+      "name": "web-wasm-debug",
+      "inherits": "web-wasm",
+      "displayName": "Web – WebAssembly with debug information",
+      "binaryDir": "${sourceDir}/../build-web-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
     }
   ],
   "buildPresets": [
+    { "name": "windows-x64", "configurePreset": "windows-x64", "configuration": "RelWithDebInfo" },
     {
       "name": "linux-x86_64",
       "displayName": "Build – Linux x86_64",
@@ -125,6 +164,15 @@
       "name": "macos-universal",
       "displayName": "Build – macOS Universal (release only)",
       "configurePreset": "macos-universal"
+    },
+    {
+      "name": "web-wasm",
+      "displayName": "Build – Web WebAssembly via Emscripten (GLES compat)",
+      "configurePreset": "web-wasm"
+    },
+    {
+      "name": "web-wasm-debug",
+      "configurePreset": "web-wasm-debug"
     }
   ]
 }

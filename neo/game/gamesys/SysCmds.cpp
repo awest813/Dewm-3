@@ -674,6 +674,12 @@ void Cmd_GetViewpos_f( const idCmdArgs &args ) {
 		player->GetViewPos( origin, axis );
 		gameLocal.Printf( "(%s) %.1f\n", origin.ToString(), axis[0].ToYaw() );
 	}
+	// Optional read-only evidence for matched renderer captures. Position alone
+	// does not establish that animated materials and world scripts share a tick.
+	if ( args.Argc() == 2 && !idStr::Icmp( args.Argv( 1 ), "state" ) ) {
+		gameLocal.Printf( "RENDER_STATE game_time=%d render_time=%d frame=%d random_seed=%d\n",
+			gameLocal.time, view ? view->time : -1, gameLocal.framenum, gameLocal.random.GetSeed() );
+	}
 }
 
 /*
@@ -708,6 +714,67 @@ void Cmd_SetViewpos_f( const idCmdArgs &args ) {
 	origin.z -= pm_normalviewheight.GetFloat() - 0.25f;
 
 	player->Teleport( origin, angles, NULL );
+}
+
+// Developer-only, bounded input replay for comparing the real simulation on
+// different platforms. It advances the loaded world; reload the test save/map
+// afterward. It deliberately does not bypass cinematics or change physics cvars.
+static void Cmd_TestUsercmd_f( const idCmdArgs &args ) {
+	idPlayer *player = gameLocal.GetLocalPlayer();
+	if (!player || !gameLocal.CheatsOk() || gameLocal.isMultiplayer) return;
+	if (args.Argc() != 6 && args.Argc() != 7) {
+		gameLocal.Printf("usage: testUsercmd <ticks 0..300> <forward -127..127> <right -127..127> <up -127..127> <buttons 0..255> [impulse 0..61]\n");
+		return;
+	}
+	const int lows[] = {0, -127, -127, -127, 0, 0};
+	const int highs[] = {300, 127, 127, 127, 255, 61};
+	int values[6] = {};
+	for (int i = 1; i < args.Argc(); ++i) {
+		char *end;
+		long value = strtol(args.Argv(i), &end, 10);
+		if (!*args.Argv(i) || *end || value < lows[i-1] || value > highs[i-1]) {
+			gameLocal.Printf("testUsercmd: invalid argument %d\n", i);
+			return;
+		}
+		values[i-1] = (int)value;
+	}
+	if (gameLocal.inCinematic || g_stopTime.GetBool()) {
+		gameLocal.Printf("testUsercmd: end the cinematic and unpause game time first\n");
+		return;
+	}
+	usercmd_t commands[MAX_CLIENTS] = {};
+	usercmd_t &cmd = commands[gameLocal.localClientNum];
+	cmd = player->usercmd;
+	cmd.forwardmove = values[1];
+	cmd.rightmove = values[2];
+	cmd.upmove = values[3];
+	cmd.buttons = values[4];
+	if (args.Argc() == 7) {
+		cmd.impulse = values[5];
+		cmd.flags ^= UCF_IMPULSE_SEQUENCE;
+	}
+	int startTime = gameLocal.time;
+	for (int i = 0; i < values[0]; ++i) {
+		cmd.gameFrame = gameLocal.framenum + 1;
+		cmd.gameTime = gameLocal.time + USERCMD_MSEC;
+		cmd.sequence++;
+		gameReturn_t ret = gameLocal.RunFrame(commands);
+		if (ret.sessionCommand[0] || gameLocal.inCinematic) {
+			gameLocal.Printf("testUsercmd: stopped after %d ticks at a session/cinematic transition\n", i+1);
+			return;
+		}
+	}
+	idVec3 origin = player->GetPhysics()->GetOrigin();
+	idVec3 velocity = player->GetPhysics()->GetLinearVelocity();
+	idWeapon *weapon = player->weapon.GetEntity();
+	gameLocal.Printf("USERCMD_CHECK ticks=%d elapsed=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f ground=%d crouch=%d health=%d clip=%d ammo=%d ready=%d weapon=%s view=%.6f,%.6f,%.6f noclip=%d\n",
+		values[0], gameLocal.time-startTime, origin.x, origin.y, origin.z,
+		velocity.x, velocity.y, velocity.z, (int)player->AI_ONGROUND,
+		(int)player->AI_CROUCH, player->health, weapon ? weapon->AmmoInClip() : -1,
+		weapon ? weapon->AmmoAvailable() : -1, weapon ? (int)weapon->IsReady() : 0,
+		weapon ? weapon->scriptObject.GetTypeName() : "none",
+		player->viewAngles.pitch, player->viewAngles.yaw, player->viewAngles.roll,
+		(int)player->noclip);
 }
 
 /*
@@ -2326,6 +2393,7 @@ void idGameLocal::InitConsoleCommands( void ) {
 	cmdSystem->AddCommand( "kill",					Cmd_Kill_f,					CMD_FL_GAME,				"kills the player" );
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"prints the current view position" );
+	cmdSystem->AddCommand( "testUsercmd", Cmd_TestUsercmd_f, CMD_FL_GAME|CMD_FL_CHEAT, "advances up to 300 simulation ticks with fixed input and reports movement/ammo; use a disposable map or reload afterward" );
 	cmdSystem->AddCommand( "setviewpos",			Cmd_SetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"sets the current view position" );
 	cmdSystem->AddCommand( "teleport",				Cmd_Teleport_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"teleports the player to an entity location", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "trigger",				Cmd_Trigger_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"triggers an entity", idGameLocal::ArgCompletion_EntityName );

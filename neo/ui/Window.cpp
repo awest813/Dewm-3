@@ -47,6 +47,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "tools/guied/GEWindowWrapper.h"
 
 #include "ui/Window.h"
+#ifdef __EMSCRIPTEN__
+#include "ui/WebMenuPolicy.h"
+#endif
 
 bool idWindow::registerIsTemporary[MAX_EXPRESSION_REGISTERS];		// statics to assist during parsing
 //float idWindow::shaderRegisters[MAX_EXPRESSION_REGISTERS];
@@ -831,6 +834,13 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 					}
 				}
 			} else if (event->evValue == K_TAB && event->evValue2) {
+#ifdef __EMSCRIPTEN__
+				if ((flags & WIN_DESKTOP) && Web_IsStockMenu(gui->GetSourceFile())) {
+					idWindow *next = FindWebFocus(GetFocusedChild(), idKeyInput::IsDown(K_SHIFT));
+					if (next) SetFocus(next);
+					return "";
+				}
+#endif
 				if (GetFocusedChild()) {
 					const char *childRet = GetFocusedChild()->HandleEvent(event, updateVisuals);
 					if (childRet && *childRet) {
@@ -1301,6 +1311,19 @@ void idWindow::Redraw(float x, float y) {
 		gui->DrawCursor();
 	}
 
+#ifdef __EMSCRIPTEN__
+	if ((flags & WIN_DESKTOP) && Web_IsStockMenu(gui->GetSourceFile())) {
+		idWindow *focus = GetFocusedChild();
+		bool show = focus != NULL;
+		for (idWindow *w = focus; w && show; w = w->parent) {
+			show = w->visible && !w->noEvents && Web_MenuOnScreen(w->actualX, w->actualY, w->drawRect.w, w->drawRect.h);
+		}
+		if (show) {
+			dc->SetTransformInfo(vec3_origin, mat3_identity);
+			dc->DrawRect(focus->actualX, focus->actualY, focus->drawRect.w, focus->drawRect.h, 1, idVec4(0.6f, 1.0f, 1.0f, 1.0f));
+		}
+	}
+#endif
 	if (gui_debug.GetInteger() && flags & WIN_DESKTOP) {
 		dc->EnableClipping(false);
 		sprintf(str, "x: %1.f y: %1.f",  gui->CursorX(), gui->CursorY());
@@ -1449,8 +1472,55 @@ void idWindow::SetupFromState() {
 	if ( scripts[ ON_ACTION ] ) {
 		cursor = idDeviceContext::CURSOR_HAND;
 		flags |= WIN_CANFOCUS;
+#ifdef __EMSCRIPTEN__
+		// Stock buttons otherwise require a mouse even after Tab focuses them.
+		// Choice controls keep their native Left/Right behavior.
+		if (Web_IsStockMenu(gui->GetSourceFile()) && !GetWinVarByName("choices")) flags |= WIN_WANTENTER;
+#endif
 	}
 }
+
+#ifdef __EMSCRIPTEN__
+void idWindow::AddWebApplyRelease() {
+	if (scripts[ON_ACTIONRELEASE]) return;
+	// Some stock GUI revisions have only an OK button and removed the old
+	// restart action. Keep their close animation and add the missing Apply.
+	const char code[] = "{ set \"cmd\" \"video restart\" ; }";
+	idParser src(LEXFL_NOSTRINGCONCAT);
+	src.LoadMemory(code, sizeof(code) - 1, "<web graphics Apply>");
+	scripts[ON_ACTIONRELEASE] = new idGuiScriptList;
+	ParseScript(&src, *scripts[ON_ACTIONRELEASE]);
+	scripts[ON_ACTIONRELEASE]->FixupParms(this);
+}
+
+void idWindow::CollectWebFocus(idList<idWindow *> &windows) {
+	// Stock dialogs stay visible but collapse to zero height when closed.
+	// An open modal owns keyboard focus just as it owns mouse events.
+	for (int i = children.Num() - 1; i >= 0; --i) {
+		idWindow *child = children[i];
+		if (child->visible && !child->noEvents && Web_MenuOnScreen(child->actualX, child->actualY, child->drawRect.w, child->drawRect.h) && (child->flags & WIN_MODAL)) {
+			child->CollectWebFocus(windows);
+			return;
+		}
+	}
+	for (int i = 0; i < children.Num(); ++i) {
+		idWindow *child = children[i];
+		if (!child->visible || child->noEvents || !Web_MenuOnScreen(child->actualX, child->actualY, child->drawRect.w, child->drawRect.h)) continue;
+		if (child->flags & WIN_CANFOCUS) windows.Append(child);
+		child->CollectWebFocus(windows);
+	}
+}
+
+idWindow *idWindow::FindWebFocus(idWindow *current, bool backwards) {
+	idList<idWindow *> windows;
+	CollectWebFocus(windows);
+	if (!windows.Num()) return NULL;
+	int index = windows.FindIndex(current);
+	if (index < 0) index = backwards ? 0 : -1;
+	index = (index + (backwards ? -1 : 1) + windows.Num()) % windows.Num();
+	return windows[index];
+}
+#endif
 
 /*
 ================

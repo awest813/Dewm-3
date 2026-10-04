@@ -896,6 +896,12 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				vcmd = args.Argv( icmd++ );
 			}
 			if ( !vcmd.Length() || !vcmd.Icmp( "speakers" ) ) {
+#ifdef __EMSCRIPTEN__
+				// WebAudio owns the output device; restarting OpenAL here drops
+				// its user-gesture activation and cannot select a surround device.
+				cvarSystem->SetCVarInteger("s_numberOfSpeakers", 2);
+				guiActive->HandleNamedEvent("cvar read sound");
+#else
 				int old = cvarSystem->GetCVarInteger( "s_numberOfSpeakers" );
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
 				if ( old != cvarSystem->GetCVarInteger( "s_numberOfSpeakers" ) ) {
@@ -906,8 +912,13 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_07230" ), common->GetLanguageDict()->GetString( "#str_04141" ), true );
 #endif
 				}
+#endif
 			}
 			if ( !vcmd.Icmp( "eax" ) ) {
+#ifdef __EMSCRIPTEN__
+				cvarSystem->SetCVarBool("s_useEAXReverb", false);
+				guiActive->HandleNamedEvent("cvar read sound");
+#else
 				if ( cvarSystem->GetCVarBool( "s_useEAXReverb" ) ) {
 					int efx = soundSystem->IsEFXAvailable();
 					switch ( efx ) {
@@ -930,9 +941,12 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 					// when you restart
 					MessageBox( MSG_OK, common->GetLanguageDict()->GetString( "#str_04137" ), common->GetLanguageDict()->GetString( "#str_07231" ), true );
 				}
+#endif
 			}
 			if ( !vcmd.Icmp( "drivar" ) ) {
+#ifndef __EMSCRIPTEN__
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "s_restart\n" );
+#endif
 			}
 			continue;
 		}
@@ -954,18 +968,34 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			} else  if ( idStr::Icmp( vcmd, "ultra" ) == 0 ) {
 				com_machineSpec.SetInteger( 3 );
 			} else if ( idStr::Icmp( vcmd, "recommended" ) == 0 ) {
+#ifdef __EMSCRIPTEN__
+				// Desktop RAM/VRAM probes cannot choose a browser's optimal quality.
+				com_machineSpec.SetInteger(1);
+#else
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "setMachineSpec\n" );
+#endif
 			}
 
 			if ( oldSpec != com_machineSpec.GetInteger() ) {
 				guiActive->SetStateInt( "com_machineSpec", com_machineSpec.GetInteger() );
 				guiActive->StateChanged( com_frameTime );
+#ifdef __EMSCRIPTEN__
+				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "execMachineSpec nores\n" );
+#else
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "execMachineSpec\n" );
+#endif
 			}
 
 			if ( idStr::Icmp( vcmd, "restart" )  == 0) {
 				guiActive->HandleNamedEvent( "cvar write render" );
+#ifdef __EMSCRIPTEN__
+				// Browser-managed display settings do not require a new context.
+				// Force reload so the quality preset updates even unchanged files.
+				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "reloadImages reload\n" );
+				guiActive->HandleNamedEvent( "cvar read render" );
+#else
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "vid_restart\n" );
+#endif
 			}
 
 			continue;
@@ -992,10 +1022,27 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			//Backup the language so we can restore it after defaults.
 			idStr lang = cvarSystem->GetCVarString("sys_lang");
 
+#ifdef __EMSCRIPTEN__
+			const char *webDisplayCvars[] = { "r_mode", "r_fullscreen", "r_customWidth", "r_customHeight" };
+			int webDisplayValues[4];
+			for (int i = 0; i < 4; ++i) webDisplayValues[i] = cvarSystem->GetCVarInteger(webDisplayCvars[i]);
+#endif
 			cmdSystem->BufferCommandText( CMD_EXEC_NOW, args.Argv( icmd++ ) );
 			if ( idStr::Icmp( "cvar_restart", args.Argv( icmd - 1 ) ) == 0 ) {
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "exec default.cfg" );
+#ifdef __EMSCRIPTEN__
+				// Restore Defaults must not save a desktop display mode or select
+				// Ultra based on the port's placeholder RAM report.
+				for (int i = 0; i < 4; ++i) cvarSystem->SetCVarInteger(webDisplayCvars[i], webDisplayValues[i]);
+				com_machineSpec.SetInteger(1);
+				cmdSystem->BufferCommandText(CMD_EXEC_NOW, "execMachineSpec nores\n");
+				cvarSystem->SetCVarInteger("s_numberOfSpeakers", 2);
+				cvarSystem->SetCVarBool("s_useEAXReverb", false);
+				guiActive->HandleNamedEvent("cvar read render");
+				guiActive->HandleNamedEvent("cvar read sound");
+#else
 				cmdSystem->BufferCommandText( CMD_EXEC_NOW, "setMachineSpec\n" );
+#endif
 
 				//Make sure that any r_brightness changes take effect
 				float bright = cvarSystem->GetCVarFloat("r_brightness");

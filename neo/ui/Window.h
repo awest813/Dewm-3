@@ -315,6 +315,11 @@ public:
 	bool ContainsStateVars();
 	void SetChildWinVarVal(const char *name, const char *var, const char *val);
 	idWindow *GetFocusedChild();
+#ifdef __EMSCRIPTEN__
+	void CollectWebFocus(idList<idWindow *> &windows);
+	idWindow *FindWebFocus(idWindow *current, bool backwards);
+	void AddWebApplyRelease();
+#endif
 	idWindow *GetCaptureChild();
 	const char *GetComment() { return comment;  }
 	void SetComment( const char * p) { comment = p; }

@@ -85,6 +85,9 @@ Sys_InitThreads
 void Sys_InitThreads() {
 	mainThreadID = SDL_ThreadID();
 	mainThreadIDset = true;
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return; // all engine work runs cooperatively on the browser thread
+#endif
 
 	// critical sections
 	for (int i = 0; i < MAX_CRITICAL_SECTIONS; i++) {
@@ -122,6 +125,9 @@ Sys_ShutdownThreads
 ==================
 */
 void Sys_ShutdownThreads() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return;
+#endif
 	// threads
 	for (int i = 0; i < MAX_THREADS; i++) {
 		if (!thread[i])
@@ -158,6 +164,9 @@ Sys_EnterCriticalSection
 */
 void Sys_EnterCriticalSection(int index) {
 	assert(index >= 0 && index < MAX_CRITICAL_SECTIONS);
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return;
+#endif
 
 	if (SDL_LockMutex(mutex[index]) != 0)
 		common->Error("ERROR: SDL_LockMutex failed\n");
@@ -170,6 +179,9 @@ Sys_LeaveCriticalSection
 */
 void Sys_LeaveCriticalSection(int index) {
 	assert(index >= 0 && index < MAX_CRITICAL_SECTIONS);
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return;
+#endif
 
 	if (SDL_UnlockMutex(mutex[index]) != 0)
 		common->Error("ERROR: SDL_UnlockMutex failed\n");
@@ -219,6 +231,9 @@ Sys_TriggerEvent
 */
 void Sys_TriggerEvent(int index) {
 	assert(index >= 0 && index < MAX_TRIGGER_EVENTS);
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	return;
+#endif
 
 	Sys_EnterCriticalSection(CRITICAL_SECTION_SYS);
 

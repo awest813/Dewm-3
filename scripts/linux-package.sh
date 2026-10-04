@@ -59,7 +59,16 @@ cat > "$STAGE_DIR/run.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
 # Convenience launcher — run from any directory.
 DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$DIR/dhewm3" +set fs_basepath "${1:-}" "$@"
+if [[ $# -lt 1 || "$1" == +* || "$1" == -* ]]; then
+  echo "Usage: $0 /path/to/doom3 [engine args...]" >&2
+  exit 1
+fi
+GAME_DATA="$1"
+shift
+for pak in "$GAME_DATA"/base/pak00{0..8}.pk4; do
+  [[ -f "$pak" && -s "$pak" ]] || { echo "Missing or empty archive: $pak" >&2; exit 1; }
+done
+exec "$DIR/dhewm3" +set fs_basepath "$GAME_DATA" "$@"
 LAUNCHER
 chmod +x "$STAGE_DIR/run.sh"
 

@@ -1,0 +1,984 @@
+# Web port (Emscripten / WebAssembly) — audit & plan
+
+> **Status: experimental renderer implementation through phase 4d.**
+> The WebGL2 compatibility layer and material shaders are implemented, but
+> a successful build is not proof of visual correctness or playable gameplay.
+> CI compiles and links the engine without game data with Emscripten 4.0.23.
+> Browser validation of rendering, audio, input, and save persistence remains
+> required before this target can be called supported.
+
+Local verification on 2026-10-03: Emscripten 4.0.23 compiled and linked the
+engine without game data, producing `dhewm3.html`, `dhewm3.js`, and
+`dhewm3.wasm`. The browser shell's data-validation regression tests passed.
+Browser checks now reach textured Mars City gameplay with a health HUD,
+restore a browser save after page reload, and accept Escape to skip the
+cinematic. A browser W key moved the player from x=1267 to x=1263.77;
+F5 created QuickSave, which restored successfully with the same position.
+Physical movement/mouse look and audible sound still need user
+confirmation; material fidelity is still under review. The WebGL layer now
+recreates recycled buffers when their target changes, copies packed depth
+through a framebuffer blit, and converts RGB screenshot reads from RGBA.
+
+Additional runtime checks: Mars City Underground loads, objective camera
+screenshots finish, pistol fire consumes ammunition, reloading and switching
+to the shotgun work, a spawned maintenance zombie animates and attacks, and
+the player-death menu restarts the level. Full `vid_restart` preserves gameplay;
+renderer-owned buffers/framebuffers and emulated state reset on context init.
+`webaudioinfo` reports a running WebAudio context with playing OpenAL sources.
+This proves scheduled audio, not audibility at the user's speakers.
+
+Known validation blocker: Codex's in-app browser reports a Chromium error
+when SDL requests pointer lock. The shell no longer duplicates SDL's request,
+and reports capture success/failure under Controls. Test physical mouse look
+in a desktop browser at `http://localhost:8080/dhewm3.html` before declaring
+the port fully playable. Desktop-browser automation was stopped because its
+current URL could not be reliably identified by the computer-use policy check.
+
+Prior art: upstream dhewm3 1.5.1 notes Doom 3 demo support based on
+[Gabriel Cuvillier's D3Wasm](http://www.continuation-labs.com/projects/d3wasm/)
+(see `Changelog.md`). That proves Doom 3 *can* run in a browser, but this fork
+has since diverged (ImGui `F10` menu, soft particles, EFX/HRTF audio, 64-bit
+cleanups) and now has an experimental WebGL2 backend.
+
+---
+
+## 1. How the engine is structured today
+
+- Entry points (blocking `while(1) common->Frame()` loop):
+  `neo/sys/linux/main.cpp:410`, `neo/sys/win32/win_main.cpp:1006`,
+  `neo/sys/aros/aros_main.cpp:931`. Framework: `neo/framework/Common.cpp`
+  (`Init`/`Frame`/`Shutdown`), `neo/framework/EventLoop.cpp`,
+  `neo/framework/Session.cpp`.
+- Platform layer: `neo/sys/{cpu,threads,events,sys_local,glimp}.cpp`,
+  OS backends `neo/sys/{posix,linux,win32,osx,aros}/`. There is **no**
+  `neo/sys/sdl/` directory — SDL2 calls live directly in the shared files.
+- Build: `neo/CMakeLists.txt` (deps: OpenAL **REQUIRED**, SDL2 **REQUIRED**
+  when `SDL2=ON`, CURL optional, vendored miniz/minizip/stb/imgui — no system
+  zlib). Options include `HARDLINK_GAME`, `DEDICATED`, `IMGUI`, `SDL2`, `TOOLS`.
+- Presets today (`neo/CMakePresets.json`): `linux-x86_64`, `linux-arm64`,
+  `linux-release`, `macos-arm64`, `macos-intel`, `macos-universal`. New in this
+  prep: `web-wasm` (see §6).
+- Game logic: `neo/game/` (base) + `neo/d3xp/` built as **shared libraries**
+  (`base.so`/`d3xp.so`, `GAME_DLL`) loaded via `dlopen`/`LoadLibrary`
+  (`neo/sys/posix/posix_main.cpp:290`, `neo/sys/win32/win_main.cpp:627`,
+  `neo/framework/Common.cpp:2696`).
+
+## 2. Portability constraints (original audit)
+
+The table records the initial porting constraints, not a list of current
+failures. The cooperative loop, hardlinked base game, WebAudio defaults,
+browser filesystem, and WebGL compatibility layer are implemented. Use the
+runtime evidence and remaining validation blocker above for current status.
+
+| # | Blocker | Where | Web fix |
+|---|---------|-------|---------|
+| 1 | **Renderer is legacy GL compat, not GLES/WebGL2.** Fixed-function calls (`glBegin`, `GL_QUADS`, matrix stack, `GL_COMBINE_ARB`, client arrays in `draw_common.cpp`), `GL_VERTEX/FRAGMENT_PROGRAM_ARB` assembly shaders (`draw_arb2.cpp`, `glprogs/*.vfp`) | `neo/renderer/qgl.h`, `qgl_proc.h`, `RenderSystem_init.cpp`, `draw_common.cpp`, `draw_arb2.cpp`, `VertexCache.cpp`, `neo/sys/glimp.cpp` | **Rewrite required.** Request GLES3 context (`SDL_GL_CONTEXT_PROFILE_ES`), port interactions/ambient/shadow/soft-particle/megaTexture shaders to GLSL-ES 3.0, replace VBO/VAO paths, force `r_gammaInShaders 1`, `r_useDepthBoundsTest 0`, stencil-separate path only, handle S3TC → ETC2/ASTC or decompress |
+| 2 | **Blocking main loop.** `while(1)` + `SDL_Delay` | `sys/*/main.cpp`, `framework/EventLoop.cpp` | `emscripten_set_main_loop(common->Frame)` / `emscripten_sleep`; canvas resize handling |
+| 3 | **Game DLLs via `dlopen`.** Browsers can't `dlopen` host `.so`s | `sys/posix/posix_main.cpp`, `framework/Common.cpp`, `config.h.in` | **Mandatory `HARDLINK_GAME=ON`**, base **or** d3xp only (pick base first) |
+| 4 | **Filesystem is POSIX sync I/O.** `fopen`/`opendir`/`stat`, `fs_basepath`/`fs_savepath`, 2 GB+ `.pk4` streaming | `framework/FileSystem.cpp`, `sys/posix/posix_main.cpp:Sys_Mkdir/ListFiles`, `sys/linux/main.cpp:187` `Sys_GetPath` | `--preload-file` for demo/shareware paks + IDBFS mount (`/home/web_user/.config/dhewm3`) + `FS.syncfs()` for saves/configs; stub `Sys_GetDriveFreeSpace`; never load whole pak into heap |
+| 5 | **x86 asm / SSE intrinsics / `cpuid` / FPU control.** Won't compile for `wasm32` | `sys/cpu.cpp`, `idlib/math/Math.h`, `idlib/math/Simd_SSE*.cpp`, `Simd_MMX/3DNow.cpp`, `Simd.cpp` dispatch | Build `Simd_Generic.cpp` only; stub `Sys_GetProcessorId()` → `GENERIC`, skip `STREFLOP_FSTCW/MXCSR` under `__EMSCRIPTEN__` |
+| 6 | **OpenAL EFX/HRTF/limiter assumptions.** Emscripten OpenAL is a WebAudio subset | `sound/snd_system.cpp`, `snd_efxfile.cpp`, `snd_world.cpp`, `snd_local.h` | Force `s_useEAXReverb 0`, `s_alHRTF 0`, `s_alOutputLimiter 0`; expect no `alcResetDeviceSOFT`/EFX; handle autoplay-policy resume on first gesture; `s_noSound` fallback must keep working |
+| 7 | **ImGui `opengl2` backend.** Immediate-mode, fixed-function | `libs/imgui/backends/imgui_impl_opengl2.cpp`, `sys/sys_imgui.cpp` (plus `dlopen(libX11)` DPI hack) | Switch to existing `imgui_impl_opengl3` + `imgui_impl_sdl2`, or `IMGUI=OFF` for first bring-up (preset does the latter) |
+| 8 | **Threads (SDL mutex/cond/thread).** Needs SharedArrayBuffer + COOP/COEP or single-thread stubs | `sys/threads.cpp`, `framework/BuildDefines.h` (`MAX_THREADS 10`) | Either `-pthread -sSHARED_MEMORY -sPTHREAD_POOL_SIZE` + proper headers, or DEDICATED-style single-thread stubs (pattern: `sys/stub/openal_stub.cpp`, `stub_gl.cpp`) |
+| 9 | **Sockets + libcurl.** Multiplayer UDP/TCP + HTTP pak downloads don't map to the web | `sys/posix/posix_net.cpp`, `sys/win32/win_net.cpp`, `framework/async/*`, `framework/FileSystem.cpp` curl block, `config.h.in` `ID_ENABLE_CURL` | `ID_ENABLE_CURL OFF` on web; disable server scan/multiplayer, keep loopback/demo playback; downloads via `fetch` shim later |
+| 10 | **Stack/memory sizing.** 8 MB stack assumption, unbounded heap growth | `CMakeLists.txt` ldflags, `sys/platform.h:43`, `renderer/Cinematic.cpp`, `MegaTexture.cpp` | `-sSTACK_SIZE=8MB -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=2GB` (tune after profiling) |
+
+Endianness is fine (`wasm32` is LE; `idlib/Lib.cpp` already handles it via
+`SDL_BYTEORDER`). `stb_image`/`stb_vorbis`/miniz/minizip are pure C and
+Emscripten-friendly. `D3_ARCH`/`D3_SIZEOFPTR` plumbing already handles 32-bit
+(`wasm32` = 4-byte pointers; expect savegames to be incompatible with x64
+builds — same as the existing macOS universal note).
+
+## 3. Port strategy (phases)
+
+1. **Prep (done).** Docs + preset + shell + setup script + CI smoke.
+2. **Minimal configure (done).** `if(EMSCRIPTEN)` guards in `neo/CMakeLists.txt`
+   (ports, `HARDLINK_GAME=ON`, `IMGUI/CURL/backtrace/X11` off, `Simd_Generic`
+   only, `.html` shell output); `sys/platform.h` Emscripten section;
+   `sys/cpu.cpp` + `idlib/math/Simd.cpp` generic-only; `sys/linux/main.cpp`
+   `emscripten_set_main_loop` + IDBFS-friendly save path; `sound/snd_system.cpp`
+   WebAudio-safe defaults; `sys/sys_imgui.cpp` X11 `dlopen` guard.
+   Goal: `emcmake` configure succeeds; renderer compilation is covered by
+   the compile job, while browser correctness requires a separate check.
+3. **GL-stub hello-canvas (done, phase 3a).** `sys/stub/stub_gl.cpp`-style
+   tolerance + `web/shell.html` canvas: `R_GLES_LoadFunctions()` resolves real
+   GLES3 entry points and no-ops the rest, `R_GLES_InitConfig()` reports a
+   WebGL2-safe `glConfig` (VBO/S3TC/depth-bounds off, ARB-program emulation on),
+   `R_LoadARBProgram` maps every `.vfp` to one shared passthrough GLSL-ES
+   program. Milestone: link + boot + cleared canvas + engine console output.
+4. **Renderer port (in progress — phase 4, the big one).**
+   - Heat-haze variants now have a dedicated GLSL shader with scroll,
+     distance-scaled distortion, mask discard, and vertex fading. Browser
+     testing removed the black rectangles produced by the generic fallback.
+   - DONE (phase 4a, `renderer/tr_gles.cpp`): real VBO submission (vertex-cache
+     design maps 1:1 onto core `BufferData/SubData`, `Position()` offsets);
+     Blinn-Phong GLSL-ES interaction shader (same maps/colors/falloff as
+     `interaction.vfp`, packed RXGB normals and engine specular-table lookup);
+     MVP shadow-volume shader with CPU-extruded volumes
+     (`r_useShadowVertexProgram 0`, `r_useIndexBuffers 1` forced on web);
+     matrix-stack mirror with per-draw MVP sync (incl. per-surface
+     `modelViewMatrix` and ortho 2D); client arrays reimplemented as attribs;
+     all alpha comparisons as shader discard; legacy texture formats translated
+     (luminance via R8/RG8 + swizzle, BGR(A) swizzled on CPU).
+   - DONE (phase 4b, `renderer/tr_gles.cpp`): fog + blend lights + projected/
+     screen textures via OBJECT_PLANE texgen emulation in the flat program
+     (draw-time program sync, since those paths bind no ARB program);
+     environment / bumpy-environment reflection shaders; glasswarp shader;
+     live env-param uniform upload (engine writes params between bind and
+     draw); vertex-color/white-material tracking (`u_useVtx`); gamma from
+     cached env slot 21 (post-process single-application preserved).
+   - DONE (phase 4c, `renderer/tr_gles.cpp`): faithful soft-particle port
+     (ARB source transliterated incl. Doom-3 depth constants, no-gamma like
+     the original) + packed depth/stencil textures and framebuffer-blit
+     depth capture; sky / diffuse-irradiance cubes
+     via unit-0-cube detection at draw time (`samplerCube` direction lookup);
+     stale-interaction demotion (explicit `R_GLES_MarkInteraction` window
+     around `RB_ARB2_CreateDrawInteractions` + self-healing on rebind).
+   - DONE (phase 4d): S3TC detected at runtime (`WEBGL_compressed_texture_s3tc`
+     enable + `glCompressedTexImage2D` mapping; uncompressed fallback where
+     absent); `reloadARBprograms` relinks compiled-in GLSL; opt-in
+     `-DWEB_THREADS=ON` pthreads experiment (serve.py sends COOP/COEP;
+     single-threaded stays the default).
+   - TODO: MegaTexture (compiles; stock maps don't use it), render-target
+     compressed paths, Emscripten perf pass, `-pthread` validation,
+     multiplayer/WebSockets, touch controls.
+5. **Audio + input + saves.** WebAudio OpenAL subset, pointer-lock/mouse,
+   touch/gamepad mapping, `FS.syncfs()` on save/config write + page hide.
+6. **Packaging.** `emcc` flags, `--preload-file` vs. remote pak streaming,
+   COOP/COEP headers if pthreads, demo-data legal check (game data is **not**
+   GPL — same rule as desktop: user supplies `base/pak*.pk4`).
+
+## 4. Game-data / legal note
+
+This source release contains **no game data** (see `README.md`). The web port
+must do the same: ship engine `.js`/`.wasm` only; at runtime load user-supplied
+`base/pak*.pk4` (Steam/GOG/1.3.1/demo where permitted). Do not commit pak files.
+
+## 5. Quick start (current state)
+
+```sh
+# 1. Install Emscripten SDK (emsdk) and activate it:
+#    https://emscripten.org/docs/compiling/Building-Projects.html
+#    emsdk install 4.0.23 && emsdk activate 4.0.23 && source ./emsdk_env.sh
+
+# 2. Environment check:
+./scripts/web-setup.sh --check-only
+
+# 3. Configure + build:
+emcmake cmake -S neo --preset web-wasm -B build-web
+cmake --build build-web --parallel
+
+# 4. Serve locally (correct .wasm MIME + COOP/COEP headers):
+./scripts/web-run.sh                  # -> http://localhost:8080/dhewm3.html
+```
+
+### Game data (your Doom 3 install — never committed)
+
+Two flows, same engine path (`+set fs_basepath /doom3`):
+
+- **In-page picker (default, shareable builds):** open `dhewm3.html`, choose
+  *Select Doom 3 folder…* (File System Access API where available, with
+  `<input webkitdirectory>` / multi-`.pk4` fallback). Files are staged to
+  `/doom3/base` in MEMFS; only the nine original `pak000.pk4` through
+  `pak008.pk4` files are read. Expansion/mod archives and unrelated files
+  are skipped before allocating their buffers. Then press Launch Doom 3.
+- **Preloaded at build time (local testing only):**
+  `emcmake cmake -S neo --preset web-wasm -B build-web -DWEB_PRELOAD_DIR=/path/to/doom3`
+  bakes `<dir>/base` to `/doom3/base` in the `.data` bundle; the page detects
+  all nine required archives and skips the picker. Do not distribute the bundle (game data
+  is not GPL).
+
+### Saves, input, audio
+
+- Saves/configs live at `/home/web_user/.local/share/dhewm3` (same layout as
+  desktop `PATH_SAVE`), backed by IDBFS: loaded at startup and automatically
+  persisted when files close. Wait for writes to finish before closing the tab.
+  Saves belong to this browser and origin. The toolbar reports whether
+  browser save storage initialized successfully.
+- Click the canvas once for pointer lock (drives SDL relative-mouse mode);
+  <kbd>Esc</kbd> releases. Audio resumes on first click (autoplay policy).
+- <kbd>Esc</kbd> opens the game menu; <kbd>Shift</kbd>+<kbd>Esc</kbd> opens
+  the engine console. The optional page console also accepts engine commands.
+
+### Shell audit and polish
+
+The picker now excludes unrelated files before reading, normalizes archive
+name casing, prevents overlapping loads, and marks incomplete data as a
+warning. Failed startup or runtime abort keeps recovery instructions and
+the console visible; the engine cannot be initialized twice. Console visibility
+can be changed during play. The layout has responsive spacing, visible keyboard
+focus, an accessible game-canvas label, and loading/storage/mouse status text.
+Regression checks cover loader filtering, overlapping selections, incomplete
+data, startup failure, input isolation, and pointer-lock status.
+
+The launcher now presents a two-step setup card instead of an empty game canvas.
+It explains Steam file selection, the nine required archives, and which data
+survives a page reload. File selection is disabled until runtime initialization
+finishes. Loading reports archive counts; completion focuses Launch Doom 3 for
+keyboard users. An unrelated flat-file selection preserves staged archives.
+Folder-picker failures expose the direct-file alternative; canceling the picker
+keeps the existing state. Failed startup/abort disables unusable controls and
+offers Reload launcher beside the diagnostic console. Persistent-storage mount
+failure permits session-only play with a visible warning, provided MEMFS works.
+
+Folder imports discover matching archive entries before replacing loaded data.
+Empty folders and failed directory scans retain the existing selection. A read
+failure for one archive is logged while the remaining archives continue loading;
+the final missing-file list keeps launch disabled until the set is complete.
+Both import paths display the number of nonempty archives loaded during staging.
+After an engine failure, keyboard focus moves to Reload launcher. Picker and
+launch buttons describe their status through accessible labels. Play controls
+and graphics actions wrap at narrow widths without requiring horizontal scrolling.
+
+After launch, the canvas fits the desktop viewport while preserving its 4:3
+aspect ratio. Focus game returns keyboard focus and requests capture when the
+engine wants mouse input. Mouse/save status remains visible next to play controls;
+graphics, key-binding help and diagnostics are secondary panels. Invalid gamma
+or brightness focuses the offending field and sets `aria-invalid` before any
+engine writes. The setup stacks into a single column at narrow widths.
+
+Graphics options exposes the same three Frame rate choices through Apply
+graphics. The archived `r_webFrameLimit` setting uses `30`, `60`, or `0`
+(Unlocked). A deadline gate on browser animation callbacks limits rendered
+frames independently of the fixed game ticks. Late callbacks skip missed
+render deadlines instead of bursting; changing limits takes effect on the next
+callback. This sets a maximum, not a guarantee of performance in complex scenes.
+
+Frame-limit validation on 2026-10-04 passed the Release WebAssembly and Windows
+builds, shell regressions, 97 gameplay/input/graphics checks and 98 menu checks.
+The timing harness exercises caps at 30, 60, 90, 120, 144 and 240 Hz display
+callbacks, preserving native fixed-tick counts, handling jitter, live switching,
+and avoiding bursts after a long gap. In the loaded Mars City hangar, 60-frame
+samples measured 30.1 FPS with the 30 cap, 57.5 FPS with the 60 cap, and 59.3 FPS
+unlocked in the embedded browser. The stock Advanced menu cycles the same values
+with arrow keys, and its former Yes/No field is widened for the full Unlocked
+label. The setting was restored to 60 and player position remained
+`(1263.77 -1501 68.25) 180`. These measurements reflect one scene and device.
+The final build visually verified the full Unlocked label. Opening launcher
+Graphics options read back Unlocked after it was selected in-game; the expanded
+panel still had no horizontal overflow at a 320-pixel viewport. The default
+60 FPS choice persisted across the rebuild/page reload.
+
+Screenshot captures a PNG through the engine and exposes a Download PNG link.
+Capture runs through the command queue and disables the toolbar button until
+the engine reports success or failure. The web-only `webscreenshot [width height]`
+command accepts sizes from 1 to 4096 per dimension; omitting a size captures the
+current render dimensions. Capture does not change the screenshot-format option
+or scissor setting. Download uses a direct user click to accommodate browser
+download policy. The current PNG remains available for retry until replaced by
+another successful capture or the page is reloaded; replacement releases its
+temporary object URL. The toolbar does not claim the file was saved.
+
+Local validation: Release WebAssembly linked successfully, and the expanded
+shell regressions passed (including storage fallback, folder cancellation/error,
+ready-button focus, failure recovery and graphics error focus). Browser checks
+covered desktop and 390-pixel setup, an empty archive's disabled launch state,
+all nine Steam archives, QuickSave restoration, console visibility, Focus game,
+and invalid/corrected gamma. No horizontal overflow was observed at the narrow
+viewport. Physical captured mouse input, audible output and lower-memory device
+behavior remain separate checks.
+
+The 2026-10-04 launcher follow-up passed Release WebAssembly linking and the
+expanded shell regressions, including empty/failed folder scans, continued
+loading after an unreadable archive, recovery focus, and screenshot replacement.
+Browser checks imported all nine Steam archives, launched, and restored QuickSave.
+Setup with installation help open and play with graphics controls open both
+had equal client/scroll widths at a 320-pixel viewport (305 CSS pixels after
+the scrollbar). Direct Download PNG clicks saved valid 866×648 and 640×480
+captures. Invalid dimensions were rejected, `r_screenshotFormat` remained `0`,
+an intentionally disabled scissor remained `0` after capture, and player
+position stayed `(1263.77 -1501 68.25) 180`. Scissor was restored to `1` afterward.
+Embedded-browser pointer lock still failed; the visible fallback instructions
+remain appropriate. These launcher checks do not establish full game fidelity.
+
+Remaining priorities:
+
+1. Confirm captured physical mouse look and audible output in a desktop
+   browser; the embedded browser cannot currently complete this check.
+2. Compare representative campaign scenes with the Windows build, especially
+   specular lighting, alpha-tested materials, and custom ARB-program fallback.
+3. Profile memory and load times on lower-memory machines. Staging the nine
+   retail archives still keeps their data in browser memory; filtering and
+   ownership transfer reduce extra allocations but do not provide streaming.
+
+See `scripts/web-setup.sh --help` and `web/shell.html` for the canvas shell.
+
+### Rendering audit and polish
+
+The interaction shader previously read normal-map X from red, although the
+image loader packs it into alpha. Interaction and bumpy-reflection shaders now
+decode `.agb`. Interaction lighting uses the engine-generated specular table,
+its factor of two, diffuse light attenuation on specular, and the original
+vertex half-vector calculation. Bumpy reflections use the original tangent
+basis ordering and no longer apply an extra vertex-color multiplier.
+
+Old-style ambient stages retain material tint when vertex colors are enabled,
+including inverse RGB modulation. Alpha testing implements all eight OpenGL
+comparisons and updates the active uniform immediately when comparison or
+enable state changes. Fragment calculations use high precision for depth
+effects. Heat-haze uniform locations are cached when programs link, and a
+failed shader pair releases any successfully compiled partner.
+
+Validation: Windows and WebAssembly builds passed. The browser restored
+Mars City gameplay from QuickSave and compiled all nine engine shader programs.
+`tests/render_shader_check.py` extracts the actual renderer GLSL into a local,
+asset-free WebGL2 fixture. Its 41 checks passed: eight shader pairs compile and
+link, alpha comparisons accept/reject pixels correctly, packed-normal lighting,
+specular-table response, rejection of red specular highlights from back-facing
+lights, material tint, inverse RGB modulation, and no GL errors.
+The engine's heat-haze program is additionally compiled during game startup.
+
+To repeat the GPU checks:
+
+```sh
+python tests/render_shader_check.py build-web/render-check.html
+python web/serve.py --dir build-web --port 8080
+```
+
+Open `http://localhost:8080/render-check.html` and inspect the visible results.
+These controlled pixel checks do not establish whole-campaign visual parity.
+Next compare matching Windows/browser camera positions for glass, particles,
+reflections, and masked materials, then port any remaining custom ARB programs
+that still use the flat fallback. Browser pointer-lock failure is a separate
+input limitation in the embedded browser.
+
+A user reported solid red planes and rails while moving in the starting
+hangar. The symptom persisted after the interaction shader corrections and
+was reproduced at `setviewpos 1279.37 -1739.38 68.25 300`. Toggling soft
+particles off removed it at that same viewpoint; toggling them on restored
+it. Disabling state caching did not resolve it.
+
+The cause was program-pair selection clearing the caller's interaction scope.
+Vertex and fragment ARB programs are bound separately. Following particles
+or heat haze, the first lighting bind temporarily formed a mismatched pair
+and selected the flat program, which cleared the scope marker. Even after the
+second bind selected the correct lighting pair, draw-time synchronization
+demoted it to the flat shader. Lighting geometry could then sample a stale
+2D texture left by another pass.
+
+Program selection now preserves the scope owned by
+`RB_ARB2_CreateDrawInteractions`; context initialization resets it. The
+temporary particle fallback was removed. The rebuilt browser showed normal
+rails at both the reproduction viewpoint and the nearby stair viewpoint
+(`1267 -1550 68.25 180`) with `r_useSoftParticles 1`.
+
+`tests/render_program_state_check.py` extracts the actual C++ state functions
+into an asset-free harness. Its 34 checks cover both binding orders after
+particles, heat haze, reflections, and the fixed pipeline, plus scope exit,
+disabled programs, shadows, and texgen. Reintroducing the old scope reset
+makes the first transition check fail. Generate the harness, compile it with
+`em++ -sENVIRONMENT=node`, and run the generated JavaScript with Node; the web
+build workflow also runs it. The separate 41 GPU shader checks still pass.
+Broader shadow/lighting parity remains unfinished.
+
+## 6. Mouse capture and frame profiling
+
+Gameplay ignores unlocked hover, while menus retain absolute cursor movement.
+The engine also rejects internally generated SDL motion while capture is
+unavailable; only the fallback's marked relative events can turn the camera.
+Pointer-lock requests from SDL and the canvas share one pending request; failed
+Promises and missing completion events leave a visible cursor and permit a
+later click to retry. The embedded Chromium host still returns `UnknownError`
+on capture. When this happens, hold the right mouse button over the canvas to
+look. Releasing the button, leaving the canvas, losing focus, or opening a menu
+ends drag-look. The fallback measures movement from the right-click position
+and sends relative SDL events with CSS-to-window scaling and fractional carry;
+it does not depend on SDL's stale absolute cursor position.
+
+The renderer tracks index-buffer bindings and deletions, including its scratch
+buffer for CPU indices, instead of querying GL before each indexed draw. It
+also skips redundant `glUseProgram` calls and repeated full uniform uploads
+for consecutive CPU shadow draws. Unchanged ARB environment parameters skip
+per-surface uniform uploads; shader activation refreshes the cached environment.
+Matrix changes still update the active MVP.
+`r_webStateCache 1` also caches actual per-program uniform values, vertex array
+layouts/enables, and array/index buffer bindings. Attribute layouts include
+the captured buffer object; deleting it invalidates the layout. Uniform cache
+collisions cause an upload, and shader reload clears the cache. Setting the
+option to `0` allows an in-game comparison while continuing to track writes.
+
+The shadow shader now implements `shadow.vp`'s light-relative homogeneous
+projection for shared vertices (`r_useShadowVertexProgram` defaults to `1`).
+Private volumes retain their precomputed positions; each surface selects the
+appropriate mode before drawing. The shadow vertex program also takes priority
+over a stale heat-haze fragment binding. Transform-feedback GPU checks compare
+near vertices, vertices at infinity, and private projected vertices against
+the CPU result through a non-identity MVP matrix.
+Recycled cache headers prefer a buffer with the same vertex/index
+classification, avoiding GPU object replacement merely to change its type.
+`r_webBufferReuse 0` restores the previous selection for comparison; the
+default is `1`. A type mismatch still creates a fresh GPU object when no
+compatible free header is available, preserving WebGL's binding rules.
+All caches reset when a new context is created, and shader reload unbinds the
+old program before deleting it.
+
+Use `webperf 180` in the Engine command field to sample 180 frames (30–600
+allowed). It reports average FPS, mean and 95th-percentile CPU frame time,
+draws, index queries, program binds, full uniform uploads, GPU buffer creation, and CPU phase
+timings. These are browser wall-clock/CPU submission measurements, not GPU
+timer-query results. Keep the camera, window size, and game options fixed for
+comparisons, and avoid compiling during a sample.
+It also counts actual uniform writes, buffer binds and attribute writes, and
+separates frame setup, scene generation and submission/cleanup.
+
+The `web-wasm` preset now uses `Release`, with `-O3 -flto` for the hardlinked
+engine/game and final WebAssembly optimisation. `web-wasm-debug` builds
+`RelWithDebInfo` in `build-web-debug` for debugging without replacing the
+release output. DWARF debug information limits the final Binaryen passes.
+
+At the hangar viewpoint `1150 -1550 68.25 180`, with an 833×625 drawing buffer
+and soft particles enabled, the initial 180-frame baseline was 36.0 FPS and
+26.98 ms mean CPU time. The state optimizations removed approximately 902
+index queries per frame, reduced program binds from 328 to 37, and reduced
+full uniform uploads from 466 to 223. Follow-up FPS samples varied between
+32.4 and 36.7; those state changes alone did not establish an FPS improvement.
+After skipping unchanged environment uploads, a further sample was 37.1 FPS.
+
+A separate 180-frame comparison in the same live game then isolated buffer
+reuse. With `r_webBufferReuse 0`, the renderer created 195.2 GPU buffers per
+frame and measured 33.8 FPS, 28.87 ms mean CPU time, and 37.41 ms p95. With
+reuse enabled, creation dropped to 0.0 per frame and the sample measured
+43.1 FPS, 22.49 ms mean CPU time, and 27.40 ms p95. Both samples had about
+900 draws per frame; WebAudio had not yet resumed in either sample.
+This local comparison shows roughly 28% more FPS and
+22% less CPU time from compatible buffer reuse; it does not predict other
+maps or hardware. Shader reload and runtime draw-error checks passed with
+reuse enabled, and the rails still rendered normally.
+An additional audio-enabled run reported a running context with ten playing
+sources and 53.4 FPS, but only 753 draws per frame; that changed workload is
+not a direct comparison with the earlier samples.
+
+Validation includes the web shell input/data tests, 78 extracted renderer
+state checks, 44 GPU shader checks, and 14 extracted drag-input bridge checks. The web workflow
+runs the shell tests and both C++ harnesses without proprietary assets; the
+GPU fixture runs in a local WebGL2 browser. Windows and WebAssembly builds
+passed; normal pointer lock still needs a host that accepts it.
+
+### 60 FPS performance audit (2026-10-04)
+
+`GL_CheckErrors()` previously called `glGetError()` every frame even with
+`r_ignoreGLErrors 1`, merely suppressing the resulting messages. On WebGL this
+query can synchronize with the browser's GPU process. The web build now skips
+the query when reporting is disabled. Set `r_ignoreGLErrors 0` to retain the
+bounded error-draining/reporting diagnostic path; desktop behavior is unchanged.
+
+A controlled 600-frame comparison used a frozen hangar rail view, a 708x531
+drawing buffer, the 60 FPS cap, shadows and soft particles enabled. Each run
+submitted exactly 940 draws, 64 program binds and 253 full uniform uploads per
+frame, with no new GPU buffers:
+
+| WebGL error polling | FPS | CPU mean | CPU p95 |
+|--------------------|----:|---------:|--------:|
+| Enabled, first control | 57.8 | 9.89 ms | 20.33 ms |
+| Disabled, optimized path | 60.1 | 4.89 ms | 6.73 ms |
+| Enabled again | 57.5 | 7.92 ms | 15.95 ms |
+
+This isolates reduced CPU submission stalls for this frozen workload. It does
+**not** establish sustained 60 FPS during live gameplay. With simulation running
+and WebAudio confirmed running with 9–10 sources, the busy rail view still
+measured roughly 51–57 FPS across samples, about 898–906 draws per frame, and
+CPU p95 around 20–27 ms. Scene generation and backend submission remain the
+largest phases. A quieter pre-audit view measured 59.8 FPS at about 413 draws.
+Different actor states, cold caches and frame scheduling affect these live
+samples, so they are not interchangeable before/after measurements.
+
+Temporary-buffer storage orphaning was also tested with audio and simulation
+running. It measured 51.9 FPS versus 55.7/55.5 FPS in the surrounding controls,
+with similar draw counts, and was removed. Disabling soft particles did not
+establish 60 FPS either; all original visual options remain enabled.
+
+Both builds pass, and 98 extracted renderer-state checks cover the retained
+change, including no queries in normal web frames, diagnostic error draining,
+clean termination and the ten-error bound. Evidence is under ignored
+`build-web/performance-query-ab-console.txt`,
+`performance-stream-ab-console.txt` and `performance-audit-baseline.txt`;
+final build logs are `performance-final-build.log` in both build directories.
+
+Next performance work should separately measure dynamic-geometry upload and
+scene-generation cost, add GPU timing where supported, and compare warm live
+samples at the rails and representative later maps. A 60 FPS cap supplies a
+target, not a guarantee: CPU p95 must fit the 16.67 ms budget and browser frame
+delivery must also stay regular. These measurements preserve game timing and
+do not justify reducing simulation ticks or skipping visual effects.
+
+At the user's stopping point, the final rebuilt browser was loaded and QuickSave
+restored without writing over it. The pre-audit playing position
+`(64.99 -1311.67 196.25) 180` was restored. Readbacks confirm the 60 FPS cap,
+`g_stopTime 0`, `com_fixedTic 0`, shadows and soft particles enabled, and
+WebAudio running (15 sources). The console is hidden. Restoration evidence is
+`build-web/performance-restored-console.txt`. Sustained 60 FPS in the busy rail
+view remains unfinished; the retained improvement is the verified stopping point.
+
+## 7. Gameplay timing and graphics options
+
+The single-threaded browser loop generates async user commands **after**
+`RunEventLoop()` fills SDL's keyboard and mouse poll queues, before advancing
+the session. With `com_asyncInput 1`, it previously generated commands before
+processing events, adding one rendered frame of delay to movement, attacks,
+reload and weapon switches. The native default `com_asyncInput 0` continues
+to use synchronous input from the current event queue.
+The original integer `USERCMD_MSEC` (16 ms), timescale handling and ten-tick
+hitch limit remain unchanged. Rendering at a different frame rate does not
+change the simulation step. Physics, weapon definitions and weapon scripts are
+unchanged.
+
+Canvas/window focus loss and hiding the page discard queued and held input.
+Releasing a mouse button outside the canvas also clears input, since page mouse
+events are withheld from SDL. This prevents movement or attack from remaining
+held when its release happens in a page control. The embedded browser's
+pointer-lock limitation described above still applies.
+
+Open **Graphics options** below the game. It reads current engine settings,
+including changes made through the game menu or console. **Apply graphics**
+updates dynamic shadows, normal maps, specular highlights, soft particles,
+gamma (0.5–3), brightness (0.5–2), frame rate (30/60/Unlocked) and texture
+filtering without a renderer restart. Settings use
+the engine's archived configuration and existing IDBFS persistence. Restoring
+defaults affects only these eight graphics settings. Controls remain disabled
+until startup succeeds, and invalid numeric fields apply no changes.
+
+The native bridge accepts only eight setting indices and validates booleans,
+ranges and non-finite numbers. Boundary validation disables optimization because
+the engine's finite-math compiler flags otherwise elide NaN checks. Graphics
+controls cannot set simulation speed, movement or weapon cvars. Texture quality
+is available through the stock in-game menu described below. Antialiasing and
+resolution are managed by the browser context and are not runtime switches.
+
+**Texture filtering** offers Standard, 2×, 4×, 8× and 16× anisotropic filtering.
+Higher levels retain sharper floor and wall textures at oblique viewing angles.
+Unsupported levels are disabled using the renderer's actual capability and
+maximum. Without the extension, Standard remains available. The panel shows
+effective filtering when a saved request exceeds the GPU's limit, and preserves
+valid intermediate values made through the native menu or console as a current
+custom choice. Restoring graphics defaults requests 8×, bounded by the device's
+limit. These changes retune the existing images through the native engine's
+filtering update path; no texture assets are replaced.
+
+The October 4 graphics audit passes all six launcher regression groups, 108
+timing/input/graphics checks, and 81 real WebGL2 checks for shader compilation,
+lighting, alpha tests, reflections, gamma, heat haze and filtering. These are
+scoped checks; mask-only campaign haze/background differences and broader
+campaign rendering remain unverified. Local GPU evidence is
+`build-web/graphics-audit-gpu-report.txt`.
+The Release web build passes (`build-web/graphics-audit-build.log`). In the
+rebuilt game, applying 16× filtering read back `image_anisotropy 16`; a console
+value of 3.5× appeared as a current custom choice and survived Apply. Original
+8× filtering, the 60 FPS cap and playing position
+`(64.99 -1311.67 196.25) 180` were restored, with simulation running and audio
+enabled. Live evidence is `build-web/graphics-audit-live-console.txt`.
+
+`tests/web_gameplay_check.py` extracts actual scheduling, movement/button,
+weapon impulse, input clearing and graphics bridge functions. Its 46 checks
+cover equal tick counts at 30/60/90/144 render callbacks per second, tick
+boundaries, hitch/timescale behavior, opposing movement, jump, attack repeats,
+multiple attack bindings, weapon/reload impulse sequences, menu inhibition,
+focus clearing and graphics validation. It also checks the integration order
+in `Common::Frame`. Compile with `em++ -O3 -ffinite-math-only -sENVIRONMENT=node`
+and run with Node; the web workflow runs this harness and the shell regressions.
+These checks validate input/timing plumbing, not full playthrough or weapon
+balance parity. The bounded native/web simulation comparison below adds direct
+movement, selected weapons and save/load evidence. Render-rate scheduling,
+physical input, remaining weapons and cinematic timing still require broader comparisons.
+
+Local validation: Windows and Release WebAssembly builds passed. The saved
+Mars City hangar loaded with all nine original Steam archives. Each graphics
+control was checked against engine cvar output, persisted across a page reload,
+and restored to its default. A temporary pistol grant showed weapon selection
+and ammunition consumption; the original QuickSave was reloaded afterward.
+Full reload-animation/fire-rate parity and physical mouse behavior remain
+unverified; the embedded host continues to report pointer-lock `UnknownError`.
+
+### Native/web simulation comparison
+
+`testUsercmd <ticks> <forward> <right> <up> <buttons> [impulse]` is an opt-in
+cheat/developer command shared by the Windows and web base-game builds. It
+advances the real `gameLocal.RunFrame` with fixed input and prints position,
+velocity, view angles, ground/crouch state, health, weapon identity, readiness
+and ammunition. Each
+invocation accepts at most 300 ticks; zero ticks only samples state. Invalid
+integer/range arguments are rejected before advancing. Cinematics, paused game
+time and multiplayer are excluded. An impulse is sent once at the start.
+
+This check advances the loaded world and does not generate a valid recording
+of ordinary user input. Use an isolated native save/config directory, or reload
+the original save afterward in the browser. It does not replace browser input,
+frame-pacing or campaign tests. Stock command-demo `consistencyHash` is always
+zero in `Game_local.cpp`, so a successful command-demo replay alone cannot prove
+simulation parity.
+
+`tests/gameplay_parity.cfg` provides a reproducible Mars City 2 sequence: walking,
+strafe collision, jump/landing, crouch/standing, pistol selection, two attack
+windows and reload after recovery. Run it from an isolated native `base/`
+directory. In the browser, submit the same `devmap`, `wait` and `testUsercmd`
+commands through Engine command; omit `condump`/`quit` and restore the original
+timing/developer settings and save afterward. Compare the native console dump
+with exported browser Console text:
+
+```text
+python tests/gameplay_parity_check.py native-console.txt web-console.txt
+```
+
+Local validation: Windows and Release WebAssembly builds passed. All 17
+checkpoints matched game-time advance, ground/crouch state, health, clip/ammo
+and readiness. The maximum position difference was `0.000244` game units;
+the comparison allows `0.001` units for position/velocity rounding. Pistol
+attack windows consumed five rounds (12 → 9 → 7), and reload restored the clip
+to 12. Three invalid argument cases were rejected on both platforms without
+changing the initial checkpoint. Fifteen asset-free verifier regressions cover
+wrapped console output, rounding, divergent movement/ammo, missing evidence,
+interrupted playback, incorrect timing and noclip. These regressions run in CI;
+the actual Steam campaign comparison is a local licensed-data check.
+
+`tests/save_weapon_parity.cfg` adds a grounded save/load round trip with a
+nonzero camera yaw and selected pistol. Position and ammunition change before
+loading the temporary `CodexParityAudit_20261003` save. Shotgun, machinegun,
+chaingun and plasma each exercise selection, fire, recovery and reload. Each
+platform writes and reads its own save; cross-platform binary save compatibility
+is not tested. Compare the logs with:
+
+```text
+python tests/gameplay_parity_check.py native-console.txt web-console.txt --scenario save-weapons
+```
+
+Local validation: all 24 Windows/web checkpoints matched exactly, including
+view angles, weapon identity, position/velocity, health, ammunition and elapsed
+game time. Save/load restored the saved yaw, pistol and clip after movement and
+firing. All four additional weapons consumed ammunition and completed reload.
+The original browser QuickSave and timing/developer settings were restored.
+The fixture creates a clearly named temporary test save in the browser; it
+does not overwrite QuickSave. Camera pitch, damage/death, late-game saves,
+explosive/melee weapons and real input cadence remain unverified.
+
+## 8. In-game options audit and polish
+
+The original licensed main menu remains the in-game interface. The web build
+adapts known stock controls during GUI parsing; it does not distribute a copy
+of the commercial GUI. Matching requires the stock GUI path, window name and
+original cvar binding, so unfamiliar mod controls keep their own behavior.
+
+- **System:** render size and display mode show a muted `Browser` state;
+  speakers show `Stereo`, and unsupported EAX shows `Off`. The legacy audio
+  backend control, when present, shows `WebAudio`. These display-only controls
+  do not accept input or overwrite engine values during Apply.
+- **Advanced:** Frame rate offers **30 FPS**, **60 FPS** (default), and
+  **Unlocked**, updating immediately without a restart. Unlocked follows the
+  browser/display refresh rate. The unsupported multisampling
+  row becomes **Soft particles**, with a live On/Off toggle. Shadows, normal
+  maps, specular highlights, brightness, volume and gameplay controls continue
+  to use their original engine bindings.
+- **Texture quality:** Low/Medium/High/Ultra retain the engine's presets but use
+  `execMachineSpec nores` to preserve browser render size. Apply uses
+  `reloadImages reload` to force quality changes without recreating WebGL or
+  restarting audio. The confirmation explains the reload. Texture reload can
+  briefly pause the game, especially with large archives.
+  The desktop hardware-scan button becomes **Use balanced texture quality**
+  (Medium), because browser RAM/VRAM probes do not identify optimal settings.
+  Stock GUI revisions with a lone OK button regain the missing Apply action;
+  their existing close animation is preserved. Older Apply/Cancel variants
+  retain their original action handlers.
+- **Preset scope:** the row explicitly says **Texture quality**. Browser texture
+  presets retain the player's decals, projectile lights, double vision, muzzle
+  flash and sound limits; changing texture quality no longer resets these options.
+- **Defaults:** the confirmation explains that controls, gameplay, graphics and
+  volume reset. Medium is the browser's default texture preset; display mode,
+  custom render dimensions, language and saved games are retained. Current menu
+  values refresh without restarting WebGL or WebAudio. Texture changes still use
+  the System panel's Apply flow.
+- **Keyboard:** Tab and Shift+Tab navigate visible controls, skip off-screen/collapsed
+  panels and disabled choices, and stay inside open modal dialogs. Enter
+  activates stock buttons; choice widgets keep Left/Right navigation. A cyan
+  outline identifies the focused control. Stock menu sliders clamp keyboard steps
+  before writing their engine values, including fractional steps at either end.
+
+Desktop behavior is retained, except that the High preset's accidental empty
+cvar assignment is corrected to `r_mode 4` (800×600). Browser sound commands
+normalize output to stereo/EAX off without invoking blocking desktop dialogs
+or restarting WebAudio.
+
+`tests/web_menu_check.py` compiles extracted menu command branches, preset
+execution, choice read/write and focus traversal alongside the actual policy.
+Its 98 checks cover mod isolation, disabled setting writes, latched Apply,
+all quality levels, preserved browser size, the desktop High preset, correct
+image reload syntax, audio normalization, focus wrapping, modal boundaries,
+slider endpoints, preset scope, browser-safe Restore Defaults and frame-rate
+choice/value mappings.
+The web workflow runs it without proprietary game assets.
+
+Local validation: Windows and Release WebAssembly builds passed, along with
+66 menu checks, 46 gameplay/input/graphics checks and the web shell regressions.
+The original Steam GUI showed browser-managed rows and the live soft-particles
+toggle. A Medium preset was selected from the loaded hangar's menu; forced
+texture reload retained position `(1263.77 -1501 68.25) 180`, render mode `5`,
+one OpenGL initialization and the same running WebAudio context. Ultra and soft
+particles were restored afterward. Reloading the hangar textures paused the
+browser for roughly eight seconds locally. The final build also completed the
+stock menu's Use balanced → Apply Changes → Apply flow using Tab/Enter;
+render mode remained `5` and WebAudio context `2` remained running. The visible
+focus outline and final System labels were verified in the browser.
+Demo and custom menu layouts still
+need separate visual verification.
+
+The follow-up options audit passed Windows and Release WebAssembly builds,
+96 menu checks and the web shell regressions. In the rebuilt Steam-supplied
+menu, the Texture quality label and full defaults confirmation were visible;
+the confirmation was canceled after inspection. Repeated keyboard steps kept
+the brightness cvar within `[0.5, 2.0]`; brightness was restored to `1`.
+Restore Defaults behavior is covered by the extracted command harness, including
+custom browser dimensions, Medium selection, audio normalization and language.
+
+## 9. Rendering accuracy verification
+
+The stock `environment.vfp` reflection path now interpolates the unnormalized
+local surface normal and eye vector, then normalizes and reflects per pixel.
+The previous implementation reflected at vertices and interpolated the result,
+which could sample a different cube face as the camera moved. Cube-map alpha
+now participates in output alpha and alpha testing, as in the stock program.
+
+`colorProcess.vfp` now has a dedicated shader instead of the flat fallback.
+It samples the captured screen using both viewport reciprocal and padded
+texture scale, then blends toward the target tint using the stock `0.33`
+mean-intensity factor and independent RGB fractions. Vertex local parameters
+and fragment environment parameters update after binding. The shader is
+included in startup, program reload and context-reset paths.
+
+Local WebGL2 pixel checks generated by `tests/render_shader_check.py` passed
+81 assertions on the tested browser (80 without the optional anisotropy
+extension), including reflection cube-face selection, cube alpha/discard,
+current material color with color arrays disabled, normalization-cube diffuse
+response, bumpy-reflection transforms, heat-haze variants, color-processing
+blend boundaries and padded screen coordinates. The extracted
+renderer-state harness passed 94 assertions, including extension fallback and
+restoration, effect selection,
+parameter updates and mismatched program pairs. These checks use generated
+textures, without distributing licensed assets. Run the generator against
+`build-web/render-check.html` and visit that page on the local server.
+
+The Release web build passed and restored QuickSave in the Mars City hangar.
+The stock `textures/decals/bloodyfilmred` material registered both color-process
+programs through `g_testPostProcess` and produced tinted output; the temporary
+effect was then removed. This exercises registration and drawing, rather than
+proving the campaign's screen-capture context matches native. Player position
+remained `(1263.77 -1501 68.25) 180`, and WebAudio context `2` was running with
+nine playing sources after the check.
+
+Full accuracy remains unproven. Completion requires evidence across the base
+Doom 3 campaign, not just the opening room or synthetic tests:
+
+| Area | Evidence needed before completion |
+|------|-----------------------------------|
+| Movement, weapons and timing | Native/web comparisons of equivalent input or command-demo sequences, including jump/crouch, collisions, weapon cadence/reload and low/high render rates |
+| Materials and lighting | Matched native/web campaign views exercising reflections, shadows, fog, heat haze, alpha materials, screen effects and every stock material program used by the campaign |
+| Campaign behavior | Level transitions, cinematics, scripted encounters, objectives, damage/death and save/load across representative late-game maps |
+| Audio and input | Audible/spatial sound and captured physical mouse look in a desktop browser, plus focus loss, menus and fallback input |
+| Browser polish | Data-loading recovery, persistent saves/settings, responsive controls, stable context recovery, and measured memory/frame behavior |
+
+The current backend still has unported ARB-program fallback and an approximate
+glass-warp implementation. Bumpy-reflection basis and model transforms have GPU
+coverage, but campaign coverage of that effect and other ambient programs is
+still incomplete. Existing tests do not prove the full campaign correct.
+
+### Matched Windows/web scene captures (2026-10-04)
+
+`tests/render_parity.cfg` captures a fixed Mars City Underground view and a
+refrigerator view at 640x480 using an isolated native save/config directory.
+Use the same licensed Steam assets locally; the fixture includes no game data.
+For browser captures, use `webscreenshot 640 480`, omit `condump`/`quit`, and
+download each PNG before requesting another. Send unfreeze/teleport separately
+from freeze/capture: `wait` counts command-buffer passes and did not reliably
+allow a rendered browser frame to update the cached camera. Verify `getviewpos`
+before comparing. Restore the user's save and temporary cvars afterward.
+
+The interaction shader now samples the stock normalization cube for diffuse
+lighting, instead of mathematically normalizing the interpolated light vector.
+The matched elevator capture's RGB mean absolute error fell from 4.006 to 3.889
+byte levels. Coordinates, orientation and the fixture's gameplay checkpoints
+matched; animated monitor content still differed. The web image remains
+brighter in parts of this scene, so this is improvement rather than parity.
+
+The refrigerator model in this fixture uses `textures/sfx/fridgeglass1`, which
+is masked cube reflection, **not heat haze**. `g_testPostProcess` also does not
+provide a valid native heat-haze oracle: a 2D overlay does not trigger the 3D
+framebuffer capture. Real campaign heat-haze comparison remains outstanding.
+
+The reflection shader previously multiplied its cube sample by a disabled
+WebGL color attribute (black), hiding the frost reflection. It now uses the
+current material color when the array is disabled, matching ARB `vertex.color`,
+and uses the vertex color when enabled without applying an extra tint. GPU
+checks cover both sources and their alpha tests. The corrected refrigerator
+capture restores visible frost. Against native, left-fridge region
+`(165,240)-(270,475)` RGB mean absolute error fell from 27.423 to 21.625 byte
+levels; pixels whose maximum channel error exceeds 10 fell from 79.64% to
+45.33%. The region excludes differing weapon animations. Remaining lighting,
+filtering and scene-time differences are not explained by this fix.
+
+`tests/render_image_compare.py` (Pillow required) measures equal-sized PNGs,
+records source hashes and optional region, and can save a difference image.
+It performs no resizing or alignment and defines no fidelity pass threshold:
+
+```sh
+python tests/render_image_compare.py native.png web.png \
+  --region 165 240 270 475 --difference difference.png
+```
+
+Local evidence is under ignored `build-web/render-parity/` and
+`build-windows/render-parity-v3-native/`: before/after PNGs and JSON measurements,
+GPU report, and console state. `build-web/reflection-color-build.log` records
+the successful Release web build. This evidence is scoped to these scenes.
+
+### Filtering and controlled lighting comparison (2026-10-04)
+
+The web backend now probes `EXT_texture_filter_anisotropic` and reads the GPU's
+actual limit. It previously forced the capability off and clamped all presets
+to 1x, despite the High/Ultra preset requesting 8x. The existing image upload
+and live-filtering code now applies those preset values on supported GPUs.
+Unsupported or invalid contexts retain the 1x fallback; capability state resets
+and is queried again after context restoration. The tested browser GPU reports
+a 16x limit, and a real GPU parameter check accepts the requested 8x value.
+
+`tests/render_lighting_parity.cfg` captures six lighting variants at 1x and a
+seventh normal view at 8x: normal, no bump, no specular, neither, no ambient and
+no interactions. Both builds use the same map, camera and bounded input replay.
+The initial browser fixture idled between map load and replay, allowing the
+elevator door to open while it stayed closed in the native captures. The final
+browser fixture submits map load, replay and freeze as one command, and the
+native fixture likewise omits the initial `wait`. This corrects the comparison
+setup rather than introducing a brightness adjustment in the renderer.
+
+The matched 1x static wall region `(0,0)-(120,420)` has RGB mean absolute error
+0.678 byte levels; without specular it is 0.369, without bump/specular 0.350,
+and without interactions both captures are black. The final normal capture's
+full-image mean absolute error is 0.953 at 1x and 1.127 at 8x, with average
+channel bias below 0.11 and 0.05 respectively. Animated monitor details and GPU
+sampling/rounding still differ; these results establish close agreement for
+this controlled view and do not prove all campaign lighting correct.
+
+The Release web build passed (`build-web/anisotropy-build.log`), as did 94
+renderer-state checks and 81 WebGL2 checks. Evidence: ignored
+`build-windows/render-lighting-v2-native/` and `build-web/render-parity/`
+(`lighting-matrix-report.json`, `anisotropy-final-report.json`, matched PNGs,
+console logs and the GPU report).
+
+At the user's requested stopping point, the next work remains real 3D campaign
+heat haze, additional material-program paths, campaign transitions/encounters,
+broader weapons and timing cases, physical captured mouse/spatial audio, and
+browser context recovery and memory behavior. The broad accuracy goal remains
+unfinished; the current renderer/preset change is the verified stopping point.
+
+The final stopping-point check confirms the launcher offers 30 FPS, 60 FPS and
+Unlocked, with 60 FPS selected. The engine readback reports `r_webFrameLimit 60`,
+`com_fixedTic 0` and `g_stopTime 0`. QuickSave was reloaded at
+`(1263.77 -1501 68.25) 180`, with HUD and weapon display enabled and diagnostic
+ambient skipping disabled. All 97 gameplay timing/input/graphics checks, 98
+in-game menu checks and the launcher regression groups pass. The new
+`tests/render_heat_parity.cfg` has native captures only; matched browser
+heat-haze validation remains unfinished and is not a parity claim.
+
+### Campaign heat-haze diagnostics and capture preview (2026-10-04)
+
+`tests/render_heat_parity.cfg` now targets two real Mars City Underground
+surfaces: `textures/glass/glass2` on `func_static_53006` (plain heat haze), and
+`textures/glass/breakyglass3` on `func_fracture_2` (vertex-masked heat haze).
+Each view is captured with programmed ambient stages enabled and disabled.
+One bounded simulation tick after each teleport updates the cached render
+view; `wait` alone did not reliably do so. The fixture sets `com_wipeSeconds 0`
+to exclude the wall-clock loading-screen fade from material comparisons.
+The reported views are `(-3200 -2884 269.5) 0` and `(-1908 -304 274.5) 0` in
+both builds. Noclip is used only to position these renderer diagnostics.
+
+The launcher now offers **View screenshot** after a successful capture, using
+the same engine PNG as the download link. Replacing a capture updates both
+before releasing the previous object URL; a failed capture preserves the last
+successful preview. This also permits inspection when an embedded host does
+not save a download. Failed mouse capture now waits for an explicit canvas or
+Focus game click instead of accepting repeated background SDL grab requests.
+Menu mouse status and right-drag fallback continue to follow gameplay state.
+
+Local evidence is in ignored `build-windows/render-heat-v4-native/` and
+`build-web/render-parity/heat-campaign-report.json`, with paired captures and
+`heat-web-console.txt`. The browser captures are screenshots of the PNG preview
+at its natural 640x480 size, **encoded as JPEG by the browser tool**. They were
+not resized or registered. This limits pixel precision and does not replace
+a raw PNG parity check. In the selected plain-glass region, native/web on/off
+mean absolute changes are 2.338/2.899 byte levels; for the vertex-masked region
+they are 0.501/0.857. The respective on/off-delta differences are 2.001 and
+0.805. Refraction is visible and measurable in both builds, but exact agreement
+remains unproven. Animated actors are also not a matched timing oracle here.
+
+The launcher regression groups and Release build pass for the preview and
+capture-retry changes (`build-web/heat-input-polish-build.log`).
+In the rebuilt browser, one explicit Focus game attempt produced one host
+capture error; subsequent console, screenshot and preview interactions left
+that count at one. The preview was verified on restored QuickSave. Readbacks
+confirm `com_wipeSeconds 1`, `com_fixedTic 0`, `g_stopTime 0`, `developer 0`,
+`ui_showGun 1`, `r_skipNewAmbient 0` and `r_webFrameLimit 60` at the original
+hangar position. Evidence: `heat-restored-console.txt` in the capture directory.
+The following checkpoint extends these diagnostics; full accuracy remains
+unfinished.
+
+### Raw PNG export and stopping checkpoint (2026-10-04)
+
+The screenshot preview now offers **Copy image** when PNG clipboard writes are
+supported. It copies the captured engine PNG without canvas recompression.
+Unavailable clipboard access leaves the preview and Download PNG link usable;
+a pending copy cannot overlap another copy or replace a newer capture's status.
+All six launcher regression groups pass, including unsupported clipboard,
+permission rejection, retry and replacement during a pending copy. Live copying
+also succeeded in the embedded browser, where downloads had not saved a file.
+Native and web builds pass (`render-state-build.log` in each build directory).
+
+`tests/retail_material_inventory.py` reads the user's local PK4 archives without
+extracting game assets. It reports 42 materials naming six stock programs and
+11 such materials referenced by compiled map geometry. This inventory excludes
+dynamic models, skins and engine-selected programs; it is not complete campaign
+coverage. Run it against the original Doom 3 `base` directory:
+
+```sh
+python tests/retail_material_inventory.py /path/to/Doom3/base \
+  --output build-web/retail-material-inventory.json
+```
+
+The heat fixture additionally exercises mask-only haze on `textures/sfx/vp1`,
+`func_static_53020`, at `(-1724 -2341 247.5) 0`. Raw PNG on/off comparisons replace
+the earlier JPEG preview measurements: selected plain and vertex-masked regions
+have native/web effect-delta mean absolute errors of 0.343 and 0.029 byte levels.
+The mask-only region differs by 0.889, and its background also differs with heat
+disabled. Shadow, fog, ambient and soft-particle controls have not isolated the
+cause. These regional measurements establish no general fidelity threshold.
+Evidence is in ignored `build-web/render-parity/raw-heat-campaign-report.json`
+and `heat-mask-background-report.json`, with the raw PNG pairs.
+
+Optional `getviewpos state` now prints game/render time, frame number and random
+seed without changing state. At the three fixture views, native and browser
+both report times 176/192/208 ms and frames 11/12/13. Their random seeds differ:
+native -471451794/-2008849762/-787973119 versus browser
+1286920474/-392712374/630802013. Matching clocks alone therefore does not prove
+equivalent simulation state. The next investigation should explain this
+divergence before attributing the remaining background difference to lighting.
+Evidence: `build-windows/render-heat-v7-native/base/render-heat-console.txt`
+and `build-web/render-parity/heat-state-web-console.txt`.
+
+At the requested stopping point, frame-rate choices remain **30 FPS**, **60 FPS**
+and **Unlocked**, with 60 FPS selected. Unlocked follows browser/display refresh;
+changing the render limit does not change the fixed game simulation tick.
+QuickSave was restored at `(1263.77 -1501 68.25) 180`; readbacks confirm
+`com_fixedTic 0`, `g_stopTime 0`, `com_wipeSeconds 1`, fog and programmed ambient
+rendering enabled, soft particles/HUD/weapon display enabled, and developer mode
+off. The console is hidden and normal play is running. Restoration evidence is
+`build-web/render-parity/stopping-checkpoint-console.txt`.
+Remaining work includes the simulation-state divergence, mask-only haze and
+background lighting, other campaign materials, broader gameplay/campaign cases,
+captured physical mouse input and browser recovery/performance coverage.
+
+## 10. Files added for web
+
+- `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,
+  game-data picker → MEMFS `/doom3/base`, IDBFS saves, pointer-lock/audio,
+  `noInitialRun` + `callMain('+set fs_basepath /doom3')`).
+- `web/serve.py` + `scripts/web-run.sh` — local server (wasm MIME, COOP/COEP).
+- `scripts/web-setup.sh` — emsdk/env check, preset validation, configure
+  guidance.
+- `neo/CMakePresets.json` → `web-wasm` preset (`HARDLINK_GAME=ON`,
+  `BASE=ON`, `D3XP=OFF`, `IMGUI=OFF`, `DEDICATED=OFF`, `TOOLS=OFF`,
+  Emscripten toolchain via `$env{EMSDK}`); `-DWEB_PRELOAD_DIR=` for testing.
+- `.github/workflows/web.yml` — validates the shell and builds the engine with
+  pinned Emscripten 4.0.23, without game data.

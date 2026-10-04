@@ -14,10 +14,14 @@ macos_engine_binary() {
   fi
 }
 
-# Return 0 when DIR looks like a Doom 3 installation (base/ with pak000.pk4).
+# Return 0 when all required original Doom 3 archives are present and nonempty.
 macos_has_doom3_data() {
   local dir="$1"
-  [[ -d "$dir/base" && -f "$dir/base/pak000.pk4" ]]
+  local pak
+  for pak in "$dir"/base/pak00{0..8}.pk4; do
+    [[ -f "$pak" && -s "$pak" ]] || return 1
+  done
+  return 0
 }
 
 # Print candidate Doom 3 install paths (one per line), in search priority order.

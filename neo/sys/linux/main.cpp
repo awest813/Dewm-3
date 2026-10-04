@@ -42,6 +42,16 @@ If you have questions concerning this license or the applicable additional terms
 
 #include <locale.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <stdint.h>
+#include "framework/CmdSystem.h"
+#include "framework/CVarSystem.h"
+#include "sys/WebFramePacing.h"
+#include "renderer/tr_local.h"
+extern "C" void R_GLES_PerfFrame( double cpuMs );
+#endif
+
 
 
 #undef snprintf // no, I don't want to use idStr::snPrintf() here.
@@ -90,8 +100,14 @@ static void SetSavePath()
 	const char* s = getenv("XDG_DATA_HOME");
 	if (s)
 		D3_snprintfC99(save_path, sizeof(save_path), "%s/dhewm3", s);
-	else
-		D3_snprintfC99(save_path, sizeof(save_path), "%s/.local/share/dhewm3", getenv("HOME"));
+	else {
+		// Under Emscripten HOME defaults to /home/web_user; IDBFS should be
+		// mounted there (see web/shell.html) and synced with FS.syncfs().
+		const char* home = getenv("HOME");
+		if (!home || !home[0])
+			home = "/home/web_user";
+		D3_snprintfC99(save_path, sizeof(save_path), "%s/.local/share/dhewm3", home);
+	}
 }
 
 const char* Posix_GetExePath()
@@ -115,6 +131,11 @@ static void SetExecutablePath(char* exePath)
 		// an error occured, clear exe path
 		exePath[0] = '\0';
 	}
+
+#elif defined(__EMSCRIPTEN__)
+	// No /proc/self/exe on web; PATH_EXE stays empty and callers fall back
+	// to IDBFS/preloaded working directory (see docs/WEB.md).
+	exePath[0] = '\0';
 
 #elif defined(__linux)
 
@@ -230,6 +251,11 @@ bool Sys_GetPath(sysPath_t type, idStr &path) {
 		return false;
 
 	case PATH_CONFIG:
+#ifdef __EMSCRIPTEN__
+		// Keep configs with savegames in the page's persistent IDBFS mount.
+		path = save_path;
+		return true;
+#endif
 		s = getenv("XDG_CONFIG_HOME");
 		if (s)
 			idStr::snPrintf(buf, sizeof(buf), "%s/dhewm3", s);
@@ -407,9 +433,103 @@ void idSysLocal::OpenURL( const char *url, bool quit ) {
 main
 ===============
 */
+#ifdef __EMSCRIPTEN__
+// Emscripten forbids a blocking while(1) loop; run one frame per browser tick.
+idCVar r_webFrameLimit("r_webFrameLimit", "60", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
+	"browser render limit: 30, 60, or 0 for unlocked (display refresh rate)", 0, 60);
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_QueueCommand(const char *command) {
+	if (command && common->IsInitialized()) {
+		cmdSystem->BufferCommandText(CMD_EXEC_APPEND, va("%s\n", command));
+	}
+}
+
+// Only live graphics options belong in this bridge. No simulation, input,
+// weapon, texture-reload or context-recreation settings are exposed here.
+struct webGraphicsOption_t {
+	const char *name;
+	double minimum, maximum;
+	bool boolean;
+};
+static const webGraphicsOption_t webGraphicsOptions[] = {
+	{ "r_shadows", 0, 1, true },
+	{ "r_skipBump", 0, 1, true },
+	{ "r_skipSpecular", 0, 1, true },
+	{ "r_useSoftParticles", 0, 1, true },
+	{ "r_gamma", 0.5, 3, false },
+	{ "r_brightness", 0.5, 2, false },
+	{ "r_webFrameLimit", 0, 60, false },
+	{ "image_anisotropy", 1, 16, false }
+};
+
+extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetTextureFilteringLimit() {
+	if (!common->IsInitialized() || !glConfig.isInitialized || !glConfig.anisotropicAvailable) return 1;
+	return glConfig.maxTextureAnisotropy < 16 ? glConfig.maxTextureAnisotropy : 16;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetGraphicsOption(int index) {
+	if (!common->IsInitialized() || index < 0 || index >= 8) return -1;
+	return cvarSystem->GetCVarFloat(webGraphicsOptions[index].name);
+}
+
+// Keep validation at the JS boundary strict even with finite-math-only in
+// engine compilation flags. This runs only when the user applies options.
+extern "C" EMSCRIPTEN_KEEPALIVE __attribute__((optnone)) int Web_SetGraphicsOption(int index, double value) {
+	if (!common->IsInitialized() || index < 0 || index >= 8) return 0;
+	// Inspect IEEE bits because the engine is built with finite-math-only.
+	uint64_t bits;
+	memcpy(&bits, &value, sizeof(bits));
+	if (((bits >> 52) & 0x7ff) == 0x7ff) return 0;
+	const webGraphicsOption_t &option = webGraphicsOptions[index];
+	if (value < option.minimum || value > option.maximum) return 0;
+	if (option.boolean && value != 0 && value != 1) return 0;
+	if (index == 6 && value != 0 && value != 30 && value != 60) return 0;
+	if (index == 7 && value > Web_GetTextureFilteringLimit()) return 0;
+	cvarSystem->SetCVarFloat(option.name, value);
+	return 1;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_ResumeAudio() {
+	EM_ASM({
+		// Doom 3 uses OpenAL's WebAudio contexts, not SDL audio.
+		for (var id in AL.contexts) {
+			var context = AL.contexts[id].audioCtx;
+			if (context && context.state === 'suspended') context.resume();
+		}
+	});
+}
+
+static void Web_AudioInfo_f( const idCmdArgs & ) {
+	EM_ASM({
+		for (var id in AL.contexts) {
+			var context = AL.contexts[id];
+			var playing = 0;
+			for (var source in context.sources) {
+				if (context.sources[source].state === 0x1012) ++playing;
+			}
+			Module.print('WebAudio: context ' + id + ' ' + context.audioCtx.state +
+				', ' + playing + ' playing OpenAL sources');
+		}
+	});
+}
+
+static void WebMainLoop() {
+	static webFramePacing_t pacing;
+	double frameStart = emscripten_get_now();
+	int limit = r_webFrameLimit.GetInteger();
+	if (!Web_ValidFrameLimit(limit)) {
+		limit = 60;
+		r_webFrameLimit.SetInteger(limit);
+	}
+	if (!pacing.ShouldRender(frameStart, limit)) return;
+	common->Frame();
+	R_GLES_PerfFrame(emscripten_get_now() - frameStart);
+}
+#endif
+
 int main(int argc, char **argv) {
 	// Prevent running Doom 3 as root
 	// Borrowed from Yamagi Quake II
+#ifndef __EMSCRIPTEN__
 	if (getuid() == 0) {
 		printf("Doom 3 shouldn't be run as root! Backing out to save your ass. If\n");
 		printf("you really know what you're doing, edit neo/sys/linux/main.cpp and remove\n");
@@ -417,6 +537,7 @@ int main(int argc, char **argv) {
 
 		return 1;
 	}
+#endif
 	// fallback path to the binary for systems without /proc
 	// while not 100% reliable, its good enough
 	if (argc > 0) {
@@ -448,8 +569,14 @@ int main(int argc, char **argv) {
 		common->Init( 0, NULL );
 	}
 
+#ifdef __EMSCRIPTEN__
+	// Browser drives the loop; return to the Emscripten runtime.
+	cmdSystem->AddCommand( "webaudioinfo", Web_AudioInfo_f, CMD_FL_SYSTEM, "report WebAudio context and playing sources" );
+	emscripten_set_main_loop( WebMainLoop, 0, 1 );
+#else
 	while (1) {
 		common->Frame();
 	}
+#endif
 	return 0;
 }

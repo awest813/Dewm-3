@@ -177,7 +177,11 @@ else() # not MSVC and not cross-compiling, assume GCC or clang (-compatible), se
 	endif()
 endif()
 
-if(cpu STREQUAL "powerpc")
+if(EMSCRIPTEN)
+	# The SDK reports x86 as CMAKE_SYSTEM_PROCESSOR for compatibility, but
+	# desktop x86 compiler flags are invalid for its wasm32 target.
+	set(cpu "wasm32")
+elseif(cpu STREQUAL "powerpc")
 	set(cpu "ppc")
 elseif(cpu STREQUAL "aarch64")
 	# "arm64" is more obvious, and some operating systems (like macOS) use it instead of "aarch64"
@@ -252,6 +256,82 @@ if(CMAKE_MAJOR_VERSION LESS 3 OR ( CMAKE_MAJOR_VERSION EQUAL 3 AND CMAKE_MINOR_V
 endif()
 
 # libs
+# --- Emscripten / WebAssembly port (see docs/WEB.md) ---
+# SDL2 and OpenAL are provided by Emscripten ports (-sUSE_SDL=2, OpenAL Soft
+# via --use-port or -lopenal), not by system find_package(). libcurl, X11 and
+# backtrace are unavailable. Game code must be hardlinked (browsers can't
+# dlopen host .so files); the web-wasm preset already sets this, enforce it
+# here so plain `emcmake cmake` fails with a clear message instead of a
+# broken link.
+if(EMSCRIPTEN)
+	if(NOT HARDLINK_GAME)
+		message(STATUS "EMSCRIPTEN requires HARDLINK_GAME, enabling it (no dlopen on web)")
+		set(HARDLINK_GAME ON)
+	endif()
+	if(NOT BASE AND NOT D3XP)
+		message(FATAL_ERROR "EMSCRIPTEN/HARDLINK_GAME needs BASE=ON or D3XP=ON (only one game at a time)")
+	endif()
+	if(IMGUI)
+		message(STATUS "Disabling IMGUI for EMSCRIPTEN (opengl2 backend is fixed-function, not WebGL2; port to imgui_impl_opengl3 later)")
+		set(IMGUI OFF)
+	endif()
+	if(DEDICATED)
+		message(STATUS "Disabling DEDICATED for EMSCRIPTEN web client build")
+		set(DEDICATED OFF)
+	endif()
+	set(CMAKE_CXX_STANDARD 11)
+	set(CMAKE_CXX_STANDARD_REQUIRED ON)
+	# Emscripten provides its own SDL2/OpenAL; never use system find_package results.
+	set(SDLx_LIBRARY "")
+	set(OPENAL_LIBRARY "")
+	set(OPENAL_INCLUDE_DIR "")
+	set(CURL_LIBRARY "")
+	# Runtime/memory defaults for the 8MB-stack engine; override on the
+	# emcc command line if profiling says otherwise.
+	set(CMAKE_EXECUTABLE_SUFFIX ".html")
+	add_link_options(
+		-sUSE_SDL=2
+		-lopenal
+		-sMIN_WEBGL_VERSION=2
+		-sMAX_WEBGL_VERSION=2
+		-sEXPORTED_RUNTIME_METHODS=FS,IDBFS,callMain,ccall
+		-lidbfs.js
+		-sALLOW_MEMORY_GROWTH=1
+		-sINITIAL_MEMORY=64MB
+		-sMAXIMUM_MEMORY=2GB
+		-sSTACK_SIZE=8MB
+		--shell-file=${CMAKE_SOURCE_DIR}/../web/shell.html
+	)
+	# Optional: bake game data into the .data bundle at build time.
+	#   emcmake cmake -S neo --preset web-wasm -B build-web -DWEB_PRELOAD_DIR=/path/to/doom3
+	# mounts <dir>/base/*.pk4 at /doom3/base so the picker can be skipped.
+	# Only for local testing — never commit game data. Prefer the in-page
+	# picker (web/shell.html) for sharing builds.
+	set(WEB_PRELOAD_DIR "" CACHE PATH "Doom 3 data dir to --preload-file into the web build (base/*.pk4 -> /doom3/base)")
+	if(WEB_PRELOAD_DIR)
+		if(NOT EXISTS "${WEB_PRELOAD_DIR}/base")
+			message(WARNING "WEB_PRELOAD_DIR=${WEB_PRELOAD_DIR} has no base/ subdir; skipping preload")
+		else()
+			message(STATUS "Preloading game data from ${WEB_PRELOAD_DIR}/base -> /doom3/base")
+			add_link_options("--preload-file=${WEB_PRELOAD_DIR}/base@/doom3/base")
+			add_link_options("-sFORCE_FILESYSTEM=1")
+		endif()
+	endif()
+	# Optional: Emscripten pthreads (SharedArrayBuffer). Single-threaded is the
+	# default: the engine's SMP renderer is off and threads add COOP/COEP +
+	# pool-size complexity. Enable only for experiments; serve with
+	# web/serve.py (sends COOP/COEP) and keep crossOriginIsolated working.
+	option(WEB_THREADS "Emscripten pthreads for the web build (experimental)" OFF)
+	if(WEB_THREADS)
+		message(STATUS "WEB_THREADS enabled: pthreads with pool size 4 (needs COOP/COEP headers)")
+		add_compile_options(-pthread)
+		add_link_options(-pthread -sPTHREAD_POOL_SIZE=4)
+	endif()
+	add_compile_options(-sUSE_SDL=2)
+	add_definitions(-D__EMSCRIPTEN__)
+	message(STATUS "Emscripten/web build: HARDLINK_GAME=ON, SDL2+OpenAL via emscripten ports, CURL/backtrace/X11 disabled")
+endif()
+
 # On macOS, CMake's FindOpenAL prefers the system OpenAL.framework (headers at
 # <OpenAL/al.h>) over Homebrew's openal-soft (headers at <AL/al.h>).  Inject
 # the Homebrew openal-soft include path BEFORE any system paths so that
@@ -259,9 +339,17 @@ endif()
 if(APPLE AND HOMEBREW_PREFIX AND EXISTS "${HOMEBREW_PREFIX}/opt/openal-soft/include")
 	include_directories(BEFORE "${HOMEBREW_PREFIX}/opt/openal-soft/include")
 endif()
+if(EMSCRIPTEN)
+	# Provided by the Emscripten toolchain; nothing to find.
+else()
 find_package(OpenAL REQUIRED)
 include_directories(${OPENAL_INCLUDE_DIR})
+endif()
 
+if(EMSCRIPTEN)
+	# SDL provided by -sUSE_SDL=2 (see EMSCRIPTEN block above).
+	set(SDL2_INCLUDE_DIR "")
+else()
 if (SDL2)
 	# skip SDL2main
 	if(APPLE OR WIN32)
@@ -279,6 +367,7 @@ else()
 	include_directories(${SDL_INCLUDE_DIR})
 	set(SDLx_LIBRARY ${SDL_LIBRARY})
 endif()
+endif() # EMSCRIPTEN SDL skip
 
 if(REPRODUCIBLE_BUILD)
 	# don't use __DATE__ and __TIME__ macros so builds are reproducible
@@ -300,6 +389,11 @@ else()
 	add_definitions(-DIMGUI_DISABLE)
 endif()
 
+if(EMSCRIPTEN)
+	set(ID_ENABLE_CURL OFF)
+	set(CURL_LIBRARY "")
+	message(STATUS "libcurl disabled for EMSCRIPTEN (fetch shim is a later phase)")
+else()
 find_package(CURL QUIET)
 if(CURL_FOUND)
 	set(ID_ENABLE_CURL ON)
@@ -309,6 +403,7 @@ else()
 	message(WARNING "libcurl not found, server downloads won't be available (apart from that dhewm3 will work)")
 	set(ID_ENABLE_CURL OFF)
 	set(CURL_LIBRARY "")
+endif()
 endif()
 
 set(D3_COMPILER_IS_CLANG FALSE)
@@ -325,7 +420,7 @@ if(MSVC)
 
 else() # not MSVC
 
-if(NOT WIN32)
+if(NOT WIN32 AND NOT EMSCRIPTEN)
 	# libbacktrace support - TODO: might work with MinGW? we don't have a crash handler for win32 though..
 	include(CheckCSourceCompiles)
 	set(CMAKE_REQUIRED_LIBRARIES backtrace)
@@ -394,6 +489,11 @@ if(D3_COMPILER_IS_GCC_OR_CLANG)
 	set(CMAKE_C_FLAGS_RELEASE "-O2 -fno-math-errno -fno-trapping-math  -ffinite-math-only -fomit-frame-pointer")
 	set(CMAKE_C_FLAGS_RELWITHDEBINFO "-g -ggdb -O2 -fno-math-errno -fno-trapping-math  -ffinite-math-only -fno-omit-frame-pointer")
 	set(CMAKE_C_FLAGS_MINSIZEREL "-Os -fno-math-errno -fno-trapping-math  -ffinite-math-only -fomit-frame-pointer")
+	if(EMSCRIPTEN)
+		# Optimise across the hardlinked engine/game boundary. Keep the debug
+		# preset separate: DWARF limits the final Binaryen optimisation passes.
+		set(CMAKE_C_FLAGS_RELEASE "-O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only")
+	endif()
 
 	set(CMAKE_CXX_FLAGS_DEBUGALL ${CMAKE_C_FLAGS_DEBUGALL})
 	set(CMAKE_CXX_FLAGS_PROFILE ${CMAKE_C_FLAGS_PROFILE})
@@ -645,6 +745,12 @@ set(src_renderer
 	renderer/stblib_impls.c
 )
 
+if(EMSCRIPTEN)
+	# WebGL2/GLES3 backend shims (qgl pointer resolution, glConfig, shared
+	# GLSL-ES stand-in program). See renderer/tr_gles.cpp + docs/WEB.md.
+	list(APPEND src_renderer renderer/tr_gles.cpp)
+endif()
+
 always_optimize_sourcefile(renderer/stblib_impls.c)
 
 # I'm a bit sloppy with headers and just glob them in..
@@ -833,12 +939,6 @@ set(src_idlib
 	idlib/math/Rotation.cpp
 	idlib/math/Simd.cpp
 	idlib/math/Simd_Generic.cpp
-	idlib/math/Simd_AltiVec.cpp
-	idlib/math/Simd_MMX.cpp
-	idlib/math/Simd_3DNow.cpp
-	idlib/math/Simd_SSE.cpp
-	idlib/math/Simd_SSE2.cpp
-	idlib/math/Simd_SSE3.cpp
 	idlib/math/Vector.cpp
 	idlib/BitMsg.cpp
 	idlib/LangDict.cpp
@@ -855,6 +955,21 @@ set(src_idlib
 	idlib/Timer.cpp
 	idlib/Heap.cpp
 )
+
+if(EMSCRIPTEN)
+	# wasm SIMD128 != x86 SSE/MMX/3DNow/AltiVec: build generic path only,
+	# Sys_GetProcessorId() returns CPUID_GENERIC (see sys/cpu.cpp).
+	message(STATUS "EMSCRIPTEN: using Simd_Generic only")
+else()
+	list(APPEND src_idlib
+		idlib/math/Simd_AltiVec.cpp
+		idlib/math/Simd_MMX.cpp
+		idlib/math/Simd_3DNow.cpp
+		idlib/math/Simd_SSE.cpp
+		idlib/math/Simd_SSE2.cpp
+		idlib/math/Simd_SSE3.cpp
+	)
+endif()
 
 add_globbed_headers(src_idlib "idlib")
 
@@ -1295,6 +1410,10 @@ if(CORE)
 	if(MSVC AND CMAKE_MAJOR_VERSION GREATER 3 OR ( CMAKE_MAJOR_VERSION EQUAL 3 AND CMAKE_MINOR_VERSION GREATER_EQUAL 6 ))
 		# CMake >= 3.6 supports setting the default project started for debugging (instead of trying to launch ALL_BUILD ...)
 		set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${DHEWM3BINARY})
+	endif()
+	if(EMSCRIPTEN)
+		set_property(TARGET ${DHEWM3BINARY} APPEND PROPERTY LINK_DEPENDS
+			"${CMAKE_SOURCE_DIR}/../web/shell.html")
 	endif()
 
 	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} PREFIX neo FILES ${src_core} ${src_sys_base} ${src_sys_core} ${src_imgui} ${src_editor_tools})

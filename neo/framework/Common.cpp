@@ -27,6 +27,11 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include <SDL.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+extern "C" void R_GLES_PerfPhase( int phase, double cpuMs );
+extern "C" void R_GLES_PerfAsync( double cpuMs );
+#endif
 
 #include "sys/platform.h"
 #include "idlib/containers/HashTable.h"
@@ -1414,6 +1419,11 @@ bool OSX_GetCPUIdentification( int& cpuId, bool& oldArchitecture );
 void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 	// DG: add an optional "nores" argument for "don't change the resolution" (r_mode)
 	bool nores = args.Argc() > 1 && idStr::Icmp( args.Argv(1), "nores" ) == 0;
+#ifdef __EMSCRIPTEN__
+	// The browser menu presents these as texture presets. Retain the player's
+	// sound limits instead of applying the desktop hardware classification.
+	int webSoundLimit = cvarSystem->GetCVarInteger("s_maxSoundsPerShader");
+#endif
 	if ( com_machineSpec.GetInteger() == 3 ) { // ultra
 		//cvarSystem->SetCVarInteger( "image_anisotropy", 1, CVAR_ARCHIVE ); DG: redundant, set again below
 		cvarSystem->SetCVarInteger( "image_lodbias", 0, CVAR_ARCHIVE );
@@ -1456,7 +1466,7 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 		cvarSystem->SetCVarInteger( "s_maxSoundsPerShader", 0, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "image_useNormalCompression", 0, CVAR_ARCHIVE );
 		if ( !nores ) // DG: added optional "nores" argument
-			cvarSystem->SetCVarInteger( "", 4, CVAR_ARCHIVE );
+			cvarSystem->SetCVarInteger( "r_mode", 4, CVAR_ARCHIVE );
 		cvarSystem->SetCVarInteger( "r_multiSamples", 0, CVAR_ARCHIVE );
 	} else if ( com_machineSpec.GetInteger() == 1 ) { // medium
 		cvarSystem->SetCVarString( "image_filter", "GL_LINEAR_MIPMAP_LINEAR", CVAR_ARCHIVE );
@@ -1502,6 +1512,13 @@ void Com_ExecMachineSpec_f( const idCmdArgs &args ) {
 
 	cvarSystem->SetCVarBool( "com_purgeAll", false, CVAR_ARCHIVE );
 	cvarSystem->SetCVarBool( "r_forceLoadImages", false, CVAR_ARCHIVE );
+
+#ifdef __EMSCRIPTEN__
+	if (nores) {
+		cvarSystem->SetCVarInteger("s_maxSoundsPerShader", webSoundLimit);
+		return;
+	}
+#endif
 
 	cvarSystem->SetCVarBool( "g_decals", true, CVAR_ARCHIVE );
 	cvarSystem->SetCVarBool( "g_projectileLights", true, CVAR_ARCHIVE );
@@ -2417,9 +2434,16 @@ idCommonLocal::Frame
 */
 void idCommonLocal::Frame( void ) {
 	try {
+#ifdef __EMSCRIPTEN__
+		double webPhaseStart = emscripten_get_now();
+#endif
 
 		// pump all the events
 		Sys_GenerateEvents();
+#ifdef __EMSCRIPTEN__
+		R_GLES_PerfPhase(0, emscripten_get_now() - webPhaseStart);
+		webPhaseStart = emscripten_get_now();
+#endif
 
 		// write config file if anything changed
 		WriteConfiguration();
@@ -2439,12 +2463,25 @@ void idCommonLocal::Frame( void ) {
 
 		eventLoop->RunEventLoop();
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		// SDL input polls are populated by RunEventLoop, not SDL_PumpEvents.
+		// Generate this frame's fixed-tick usercmds from the input just read,
+		// instead of delaying movement, attacks and weapon impulses a frame.
+		double webAsyncStart = emscripten_get_now();
+		Async();
+		R_GLES_PerfAsync(emscripten_get_now() - webAsyncStart);
+#endif
+
 		// DG: prepare new ImGui frame - I guess this is a good place, as all new events should be available?
 		D3::ImGuiHooks::NewFrame();
 
 		com_frameTime = com_ticNumber * USERCMD_MSEC;
 
 		idAsyncNetwork::RunFrame();
+#ifdef __EMSCRIPTEN__
+		R_GLES_PerfPhase(1, emscripten_get_now() - webPhaseStart);
+		webPhaseStart = emscripten_get_now();
+#endif
 
 		if ( idAsyncNetwork::IsActive() ) {
 			if ( idAsyncNetwork::serverDedicated.GetInteger() != 1 ) {
@@ -2453,10 +2490,17 @@ void idCommonLocal::Frame( void ) {
 			}
 		} else {
 			session->Frame();
+#ifdef __EMSCRIPTEN__
+			R_GLES_PerfPhase(2, emscripten_get_now() - webPhaseStart);
+			webPhaseStart = emscripten_get_now();
+#endif
 
 			// normal, in-sequence screen update
 			session->UpdateScreen( false );
 		}
+#ifdef __EMSCRIPTEN__
+		R_GLES_PerfPhase(3, emscripten_get_now() - webPhaseStart);
+#endif
 
 		// report timing information
 		if ( com_speeds.GetBool() ) {
@@ -3076,10 +3120,12 @@ void idCommonLocal::Init( int argc, char **argv ) {
 		Sys_Error( "Error during initialization" );
 	}
 
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
 	async_timer = SDL_AddTimer(USERCMD_MSEC, AsyncTimer, NULL);
 
 	if (!async_timer)
 		Sys_Error("Error while starting the async timer: %s", SDL_GetError());
+#endif
 }
 
 

@@ -148,10 +148,16 @@ RB_ARB2_CreateDrawInteractions
 
 =============
 */
-void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
+void	RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( !surf ) {
 		return;
 	}
+
+#ifdef __EMSCRIPTEN__
+	// Tell the GLES backend these draws genuinely use the interaction
+	// program (draw-time sync demotes stale bindings elsewhere).
+	R_GLES_MarkInteraction( 1 );
+#endif
 
 	// perform setup here that will be constant for all interactions
 	GL_State( GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE | GLS_DEPTHMASK | backEnd.depthFunc );
@@ -239,6 +245,9 @@ void RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 
 	qglDisable(GL_VERTEX_PROGRAM_ARB);
 	qglDisable(GL_FRAGMENT_PROGRAM_ARB);
+#ifdef __EMSCRIPTEN__
+	R_GLES_MarkInteraction( 0 );
+#endif
 }
 
 
@@ -488,6 +497,15 @@ static ID_INLINE bool isARBidentifierChar( int c ) {
 }
 
 void R_LoadARBProgram( int progIndex ) {
+#ifdef __EMSCRIPTEN__
+	// WebGL2 uses the GLSL implementations selected by the registered ARB
+	// name/ID in tr_gles.cpp. Unported material programs still use fallback.
+	if ( progs[progIndex].ident == 0 ) {
+		progs[progIndex].ident = PROG_USER + progIndex;
+	}
+	R_GLES_NoteProgram( progs[progIndex].name, progs[progIndex].ident );
+	return;
+#else
 	int		ofs;
 	int		err;
 	char	*buffer;
@@ -708,6 +726,7 @@ void R_LoadARBProgram( int progIndex ) {
 	}
 
 	common->Printf( "\n" );
+#endif // !__EMSCRIPTEN__
 }
 
 /*
@@ -761,9 +780,14 @@ void R_ReloadARBPrograms_f( const idCmdArgs &args ) {
 	int		i;
 
 	common->Printf( "----- R_ReloadARBPrograms -----\n" );
+#ifdef __EMSCRIPTEN__
+	// No .vfp files on GLES; relink the compiled-in GLSL programs instead.
+	R_GLES_ReloadPrograms();
+#else
 	for ( i = 0 ; progs[i].name[0] ; i++ ) {
 		R_LoadARBProgram( i );
 	}
+#endif
 }
 
 /*

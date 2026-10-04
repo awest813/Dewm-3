@@ -272,6 +272,13 @@ NET_InitNetworking
 */
 void Sys_InitNetworking(void)
 {
+#ifdef __EMSCRIPTEN__
+	// Browser networking has no OS interfaces or native UDP sockets.
+	// Single-player and engine loopback do not need interface discovery.
+	num_interfaces = 0;
+	common->Printf("Browser network: native interface discovery disabled\n");
+	return;
+#else
 	unsigned int ip, mask;
 	struct ifaddrs *ifap, *ifp;
 
@@ -318,6 +325,7 @@ void Sys_InitNetworking(void)
 			break;
 	}
 	freeifaddrs(ifap);
+#endif
 }
 
 /*

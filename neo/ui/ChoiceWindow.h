@@ -78,6 +78,9 @@ private:
 	idMultiWinVar		updateStr;
 
 	idWinBool			liveUpdate;
+#ifdef __EMSCRIPTEN__
+	bool                webReadOnly;
+#endif
 	idWinStr			updateGroup;
 };
 

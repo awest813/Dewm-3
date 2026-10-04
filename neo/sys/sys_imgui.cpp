@@ -6,11 +6,15 @@
 #include "sys_imgui.h"
 
 #ifdef D3_SDL_X11
+#if defined(__EMSCRIPTEN__)
+// No dlopen/X11 on web; GetDefaultDPI() falls back to SDL_GetDisplayDPI().
+#else
 #include <dlfcn.h>
 #include <SDL_syswm.h>
 //char *XGetDefault(Display* display, const char*	program, const char* option)
 typedef char* (*MY_XGETDEFAULTFUN)(Display*, const char*, const char*);
-#endif
+#endif // __EMSCRIPTEN__
+#endif // D3_SDL_X11
 
 #include "../libs/imgui/backends/imgui_impl_opengl2.h"
 #include "../libs/imgui/backends/imgui_impl_sdl2.h"

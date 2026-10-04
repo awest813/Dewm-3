@@ -42,12 +42,12 @@ jobs:
       matrix:
         include:
           - name: macOS arm64 (Apple Silicon)
-            runner: macos-14
+            runner: macos-15
             preset: macos-arm64
             arch: arm64
             primary: true
           - name: macOS x86_64 (Intel)
-            runner: macos-13
+            runner: macos-15-intel
             preset: macos-intel
             arch: x86_64
             primary: false
@@ -73,8 +73,7 @@ jobs:
           file "$BINARY"
           otool -L "$BINARY" | grep -E 'openal|SDL2|curl' || true
           # dhewm3 -h may exit non-zero; capture output and confirm it ran
-          "$BINARY" -h > smoke.log 2>&1 || true
-          head -n 20 smoke.log
+          bash scripts/check-engine.sh "$BINARY"
 
       - name: Assemble .app bundle and DMG
         run: |
@@ -103,14 +102,14 @@ jobs:
             build/*.dylib
             dhewm3.app/
             dhewm3-macos-${{ matrix.arch }}.dmg
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # ── Optional: sign + notarize universal binary ──────────────────────────────
   # Runs only when triggered via workflow_dispatch with sign=true.
   # Requires all MACOS_CERTIFICATE* and NOTARIZE_* secrets to be set.
   release-sign:
     name: Sign & Notarize (universal)
-    runs-on: macos-14
+    runs-on: macos-15
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.sign == 'true'
     needs: build
 

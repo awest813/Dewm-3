@@ -34,6 +34,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/UserInterfaceLocal.h"
 
 #include "ui/ChoiceWindow.h"
+#ifdef __EMSCRIPTEN__
+#include "ui/WebMenuPolicy.h"
+#endif
 
 /*
 ============
@@ -67,6 +70,9 @@ void idChoiceWindow::CommonInit() {
 	choiceType = 0;
 	cvar = NULL;
 	liveUpdate = true;
+#ifdef __EMSCRIPTEN__
+	webReadOnly = false;
+#endif
 	choices.Clear();
 }
 
@@ -104,6 +110,10 @@ void idChoiceWindow::RunNamedEvent( const char* eventName ) {
 }
 
 void idChoiceWindow::UpdateVars( bool read, bool force ) {
+#ifdef __EMSCRIPTEN__
+	// Named Apply events must not write stale values from disabled controls.
+	if (webReadOnly && !read) return;
+#endif
 	if ( force || liveUpdate ) {
 		if ( cvar && cvarStr.NeedsUpdate() ) {
 			if ( read ) {
@@ -402,6 +412,41 @@ void idChoiceWindow::PostParse() {
 	}
 	// DG end
 
+#ifdef __EMSCRIPTEN__
+	const webMenuChoice_t *webOption = Web_MenuChoice(gui->GetSourceFile(), name.c_str(), cvarStr.c_str());
+	if (webOption) {
+		webReadOnly = webOption->readOnly;
+		choicesStr.Set(webOption->choices);
+		choiceType = 1;
+		if (webOption->replacementCvar) {
+			cvarStr.Set(webOption->replacementCvar);
+			choiceVals.Set(webOption->values);
+			liveUpdate = true;
+			if (!idStr::Icmp(webOption->replacementCvar, "r_webFrameLimit") && rect.w() < 90) {
+				// The stock Yes/No field is too narrow for "Unlocked".
+				idRectangle wider = rect;
+				wider.x -= 90 - wider.w;
+				wider.w = 90;
+				rect = wider;
+				rect.SetEval(false);
+				CalcClientRect(0, 0);
+			}
+			// These browser options update live without the old restart action.
+			delete scripts[ON_ACTION];
+			scripts[ON_ACTION] = NULL;
+		} else {
+			if (!idStr::Icmp(cvarStr.c_str(), "s_useEAXReverb")) cvarSystem->SetCVarBool("s_useEAXReverb", false);
+			if (!idStr::Icmp(cvarStr.c_str(), "s_numberOfSpeakers")) cvarSystem->SetCVarInteger("s_numberOfSpeakers", 2);
+			// Other display-only values retain the existing cvar.
+			choiceVals.Set(va("%i", cvarSystem->GetCVarInteger(cvarStr.c_str())));
+			noEvents = true;
+			noEvents.SetEval(false);
+			foreColor.Set("0.5 0.6 0.65 1");
+			foreColor.SetEval(false);
+		}
+	}
+#endif
+
 	UpdateChoicesAndVals();
 
 	InitVars();
@@ -409,6 +454,9 @@ void idChoiceWindow::PostParse() {
 	UpdateVars(false);
 
 	flags |= WIN_CANFOCUS;
+#ifdef __EMSCRIPTEN__
+	if (webOption && webOption->readOnly) flags &= ~WIN_CANFOCUS;
+#endif
 }
 
 void idChoiceWindow::Draw(int time, float x, float y) {

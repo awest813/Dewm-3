@@ -42,6 +42,11 @@ If you have questions concerning this license or the applicable additional terms
 #undef NO_CPUID
 #endif
 
+// Emscripten/wasm32 has no cpuid/x87/MXCSR; use the generic path.
+#if defined(__EMSCRIPTEN__)
+#define NO_CPUID
+#endif
+
 #if defined(__GNUC__)
 	#if !defined(__i386__) && !defined(__x86_64__)
 		#define NO_CPUID
@@ -196,6 +201,10 @@ Sys_GetProcessorId
 ================
 */
 int Sys_GetProcessorId( void ) {
+#if defined(__EMSCRIPTEN__)
+	// wasm SIMD128 != SSE; report generic so idSIMD stays on Simd_Generic.
+	return CPUID_GENERIC;
+#else
 	int flags = CPUID_GENERIC;
 
 	if (SDL_HasMMX())
@@ -220,6 +229,7 @@ int Sys_GetProcessorId( void ) {
 		flags |= CPUID_ALTIVEC;
 
 	return flags;
+#endif
 }
 
 /*

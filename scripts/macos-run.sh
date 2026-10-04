@@ -104,8 +104,8 @@ fi
 if [[ "$is_explicit_path_arg" == "true" ]]; then
   GAME_DATA="${1%/}"
   if ! macos_has_doom3_data "$GAME_DATA"; then
-    echo "Warning: $GAME_DATA does not contain base/pak000.pk4 — game data may be missing or path is wrong."
-    echo "Expected to find pak000.pk4 … pak008.pk4 inside $GAME_DATA/base/"
+    echo "Error: $GAME_DATA must contain nonempty base/pak000.pk4 through pak008.pk4."
+    exit 1
   fi
   # Save the explicit path for future launches (matches linux-run.sh behaviour).
   mkdir -p "$(dirname "$PREFS_FILE")"

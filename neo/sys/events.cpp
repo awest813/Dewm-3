@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #include <SDL.h>
 
 #include "sys/platform.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include "idlib/containers/List.h"
 #include "idlib/Heap.h"
 #include "framework/Common.h"
@@ -86,6 +89,35 @@ idCVar joy_gamepadLayout("joy_gamepadLayout", "-1", CVAR_SYSTEM | CVAR_ARCHIVE |
 
 // set in handleMouseGrab(), used in Sys_GetEvent() to decide what kind of internal mouse event to generate
 static bool in_relativeMouseMode = true;
+#ifdef __EMSCRIPTEN__
+extern bool GLimp_WebMouseCaptured();
+static bool Web_UseMouseMotion(unsigned int which) {
+	if (which == 0xD003) return in_relativeMouseMode;
+	return !in_relativeMouseMode || GLimp_WebMouseCaptured();
+}
+static double webDragRemainderX = 0, webDragRemainderY = 0;
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_SetDragLook(int active) {
+	webDragRemainderX = webDragRemainderY = 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_DragMouse(double dx, double dy, double cssWidth, double cssHeight) {
+	SDL_Window *mouseWindow = SDL_GetMouseFocus();
+	if (!mouseWindow || !in_relativeMouseMode || cssWidth <= 0 || cssHeight <= 0) return;
+	int width, height;
+	SDL_GetWindowSize(mouseWindow, &width, &height);
+	// Match SDL's CSS-to-window scaling, retaining subpixel movement.
+	double x = dx * width / cssWidth + webDragRemainderX;
+	double y = dy * height / cssHeight + webDragRemainderY;
+	SDL_Event event = {};
+	event.type = SDL_MOUSEMOTION;
+	event.motion.windowID = SDL_GetWindowID(mouseWindow);
+	event.motion.which = 0xD003; // distinguish fallback motion from menu input
+	event.motion.xrel = (int)x;
+	event.motion.yrel = (int)y;
+	webDragRemainderX = x - event.motion.xrel;
+	webDragRemainderY = y - event.motion.yrel;
+	if (event.motion.xrel || event.motion.yrel) SDL_PushEvent(&event);
+}
+#endif
 // set in Sys_GetEvent() on window focus gained/lost events
 static bool in_hasFocus = true;
 
@@ -1301,6 +1333,11 @@ sysEvent_t Sys_GetEvent() {
 #endif
 
 		case SDL_MOUSEMOTION:
+#ifdef __EMSCRIPTEN__
+			// Reject SDL's synthetic warps too: the DOM hover filter only
+			// sees browser events, and relative mode can outlive failed lock.
+			if (!Web_UseMouseMotion(ev.motion.which)) continue;
+#endif
 			if ( in_relativeMouseMode ) {
 				res.evType = SE_MOUSE;
 				res.evValue = ev.motion.xrel;
@@ -1563,6 +1600,16 @@ void Sys_ClearEvents() {
 
 	event_overflow.SetNum(0, false);
 }
+
+#ifdef __EMSCRIPTEN__
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_ReleaseInput() {
+	if (!common->IsInitialized()) return;
+	// A keyup/mouseup outside the canvas is deliberately withheld from SDL.
+	// Drop queued input as well as held states before the next async tic.
+	Sys_ClearEvents();
+	idKeyInput::ClearStates();
+}
+#endif
 
 static void handleMouseGrab() {
 

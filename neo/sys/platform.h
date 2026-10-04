@@ -183,8 +183,37 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 
 
+// Emscripten / WebAssembly (must come before the generic __unix__ block:
+// emscripten also defines unix-like macros). See docs/WEB.md.
+#if defined(__EMSCRIPTEN__)
+
+#ifdef GAME_DLL
+#define ID_GAME_API					__attribute__((visibility ("default")))
+#else
+#define ID_GAME_API
+#endif
+
+#define ALIGN16( x )				x __attribute__ ((aligned (16)))
+#define PACKED						__attribute__((packed))
+
+#define _alloca						alloca
+#define _alloca16( x )				((void *)((((uintptr_t)alloca( (x)+15 )) + 15) & ~15))
+
+#define PATHSEPERATOR_STR			"/"
+#define PATHSEPERATOR_CHAR			'/'
+
+#define __cdecl
+#define ASSERT						assert
+
+#define ID_INLINE					inline
+#define ID_STATIC_TEMPLATE
+
+#define assertmem( x, y )
+
+#endif
+
 // Unix
-#ifdef __unix__
+#if defined(__unix__) && !defined(__EMSCRIPTEN__)
 
 #ifdef	__GNUC__
   // NOTE: Do *not* use __builtin_alloca_with_align(), unlike regular alloca it frees at end of block instead of end of function !

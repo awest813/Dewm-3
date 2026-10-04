@@ -79,6 +79,10 @@ void idSIMD::InitProcessor( const char *module, bool forceGeneric ) {
 
 	cpuid = idLib::sys->GetProcessorId();
 
+#if defined(__EMSCRIPTEN__)
+	// No x86 SIMD on wasm32; stay on the generic implementation.
+	newProcessor = generic;
+#else
 	if ( forceGeneric ) {
 
 		newProcessor = generic;
@@ -106,6 +110,7 @@ void idSIMD::InitProcessor( const char *module, bool forceGeneric ) {
 
 		newProcessor = processor;
 	}
+#endif
 
 	if ( newProcessor != SIMDProcessor ) {
 		SIMDProcessor = newProcessor;

@@ -34,7 +34,11 @@ mkdir -p "$PREFS_DIR"
 
 has_doom3_data() {
   local dir="$1"
-  [[ -d "$dir/base" && -f "$dir/base/pak000.pk4" ]]
+  local pak
+  for pak in "$dir"/base/pak00{0..8}.pk4; do
+    [[ -f "$pak" && -s "$pak" ]] || return 1
+  done
+  return 0
 }
 
 show_help() {
@@ -106,9 +110,8 @@ fi
 if [[ "$is_explicit_path_arg" == "true" ]]; then
   GAME_DATA="${1%/}"
   if ! has_doom3_data "$GAME_DATA"; then
-    echo "Warning: $GAME_DATA/base/pak000.pk4 not found — game data may be"
-    echo "         missing or the path is wrong."
-    echo "         Expected the top-level Doom 3 folder (the one containing base/)."
+    echo "Error: $GAME_DATA must contain nonempty base/pak000.pk4 through pak008.pk4."
+    exit 1
   fi
   echo "$GAME_DATA" > "$PREFS_FILE"
   exec "$BINARY" +set fs_basepath "$GAME_DATA" "${@:2}"
@@ -146,7 +149,8 @@ CANDIDATES=(
 # Parse extra Steam library roots from libraryfolders.vdf
 for VDF in \
     "$STEAM_ROOT/steamapps/libraryfolders.vdf" \
-    "$STEAM_COMPAT/steamapps/libraryfolders.vdf"; do
+    "$STEAM_COMPAT/steamapps/libraryfolders.vdf" \
+    "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps/libraryfolders.vdf"; do
   if [[ -f "$VDF" ]]; then
     while IFS= read -r LINE; do
       if [[ "$LINE" =~ \"path\"[[:space:]]*\"([^\"]+)\" ]]; then

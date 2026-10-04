@@ -196,9 +196,17 @@ cmake --build build --parallel
 
 ## Compiling (Windows)
 
-The build system is CMake-based. Pre-built dependency binaries are available from the
-upstream project at https://github.com/dhewm/dhewm3-libs. See the [upstream README](https://github.com/dhewm/dhewm3/blob/master/README.md)
-for detailed Windows build instructions.
+Install Visual Studio C++ build tools, a Windows SDK, and CMake, then run:
+
+```powershell
+./scripts/windows-run.ps1 -CheckOnly  # discover your original Doom 3 Steam data
+./scripts/windows-setup.ps1          # fetch pinned dependencies and build x64
+./scripts/windows-run.ps1            # launch this fork with that data
+```
+
+See **[docs/WINDOWS.md](./docs/WINDOWS.md)** for prerequisites, alternate Steam
+libraries, explicit paths, and launching this fork through Steam.
+
 
 ## Back End Rendering of Stencil Shadows
 

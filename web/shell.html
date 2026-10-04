@@ -1,0 +1,888 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dhewm3 (WebAssembly)</title>
+<style>
+  :root { color-scheme: dark; --bg: #0d1115; --panel: #151c23; --line: #303e48; --text: #e8eef1; --muted: #a7b7c1; --accent: #9ce1de; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: radial-gradient(ellipse at 85% 0%, #203238 0, transparent 55%), var(--bg); color: var(--text); font: 15px/1.6 system-ui, sans-serif; min-height: 100vh; }
+  #wrap { max-width: 1120px; margin: 0 auto; padding: 32px 24px; }
+  .masthead { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .18em; font-weight: 700; color: var(--accent); margin: 0 0 4px; }
+  h1 { font-size: 28px; letter-spacing: -.04em; margin: 0; line-height: 1.15; }
+  h1 span { font-weight: 400; color: var(--muted); font-size: 16px; letter-spacing: 0; margin-left: 12px; }
+  h2 { font-size: 22px; line-height: 1.3; margin: 0 0 10px; }
+  h3 { font-size: 16px; margin: 0 0 8px; }
+  p { margin: 0 0 16px; }
+  .badge { font-size: 12px; border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; color: var(--muted); }
+  #setup { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; overflow: hidden; }
+  #setup.done { display: none; }
+  .setup-heading { padding: 28px 32px 0; }
+  .setup-heading p { max-width: 680px; color: var(--muted); }
+  .setup-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+  .setup-step { padding: 20px 32px 28px; }
+  .setup-step + .setup-step { border-left: 1px solid var(--line); }
+  .step-label { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-weight: 600; }
+  .step-label span { border: 1px solid #49606c; border-radius: 50%; width: 26px; height: 26px; text-align: center; color: var(--accent); font-size: 12px; line-height: 24px; }
+  .picker-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  button { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 10px 16px; cursor: pointer; background: #233039; border: 1px solid #49606c; border-radius: 6px; color: var(--text); }
+  button:hover:enabled { background: #30434d; border-color: #71929d; }
+  button.primary { background: var(--accent); color: #11292c; border-color: var(--accent); }
+  button.primary:hover:enabled { background: #bdf1ef; }
+  button:disabled { cursor: default; opacity: .5; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+  input { accent-color: var(--accent); }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  input[type=text], input[type=number], select { min-width: 0; border: 1px solid #49606c; border-radius: 4px; background: #0d151b; padding: 8px; color: inherit; font: inherit; }
+  input[aria-invalid=true] { border-color: #f5c68e; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .note { color: #f5c68e; font-size: 13px; }
+  .ok { color: var(--accent); font-size: 13px; }
+  #status { display: block; font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+  #progress { width: 100%; height: 6px; accent-color: var(--accent); margin: 0 0 12px; }
+  #datastatus { overflow-wrap: anywhere; }
+  #start { width: 100%; margin-top: 8px; }
+  #retry { margin-top: 8px; }
+  summary { cursor: pointer; min-height: 44px; display: list-item; padding: 10px 0; font-weight: 600; }
+  .install-help { font-size: 13px; color: var(--muted); }
+  .install-help p { margin-bottom: 12px; }
+  code { color: #c6dedf; overflow-wrap: anywhere; font-size: .9em; }
+  .setup-footer { border-top: 1px solid var(--line); padding: 16px 32px; color: var(--muted); font-size: 12px; }
+  .setup-footer p { margin: 0; }
+  #play-area { display: none; }
+  body.playing #play-area { display: block; }
+  body.playing .masthead { margin-bottom: 16px; }
+  body.playing #wrap { padding-top: 16px; }
+  #viewport { max-width: min(100%, calc((100dvh - 200px) * 4 / 3)); margin: 0 auto; }
+  #canvas { width: 100%; height: auto; aspect-ratio: 4 / 3; background: #000; border: 1px solid var(--line); display: block; }
+  #screenshot-image { display: block; max-width: 100%; height: auto; margin-bottom: 16px; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
+  .toolbar label { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 8px; }
+  .play-status { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+  #graphics, #controls-help { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0 20px; margin-top: 12px; }
+  #graphics-controls { border: 0; padding: 0 0 16px; margin: 0; min-width: 0; }
+  .graphics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; margin: 16px 0; }
+  .graphics-grid label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .graphics-grid label:has(input[type=checkbox]) { justify-content: flex-start; }
+  .graphics-grid input[type=number] { width: 90px; }
+  #graphics-status { margin-bottom: 16px; }
+  .graphics-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .graphics-actions button { max-width: 100%; }
+  kbd { border: 1px solid #49606c; padding: 1px 6px; border-radius: 4px; font: 12px monospace; color: var(--text); white-space: nowrap; }
+  .controls-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 8px 0 16px; font-size: 13px; color: var(--muted); }
+  .controls-grid p { margin: 0; }
+  #developer-console { margin-top: 20px; }
+  #console { white-space: pre-wrap; overflow-wrap: anywhere; background: #080c0f; border: 1px solid var(--line); border-radius: 6px; padding: 12px; height: 220px; overflow-y: auto; font: 12px/1.5 monospace; }
+  #command-form { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  #engine-command { flex: 1; min-width: 120px; }
+  noscript p { padding: 20px; border: 1px solid var(--line); }
+  @media (max-width: 640px) {
+    #wrap { padding: 20px 16px; }
+    h1 span { display: block; margin: 6px 0 0; font-size: 14px; }
+    .setup-grid { grid-template-columns: 1fr; }
+    .setup-heading { padding: 24px 20px 0; }
+    .setup-step { padding: 16px 20px 24px; }
+    .setup-step + .setup-step { border-left: 0; border-top: 1px solid var(--line); }
+    .setup-footer { padding: 16px 20px; }
+    .picker-actions button { flex: 1 1 180px; }
+    #viewport { max-width: 100%; }
+    #command-form label { flex-basis: 100%; }
+    .toolbar button { flex: 1 1 120px; }
+  }
+</style>
+</head>
+<body>
+<main id="wrap">
+  <header class="masthead">
+    <div><p class="eyebrow">dhewm3 · Browser edition</p><h1>DOOM 3 <span>Return to Mars.</span></h1></div>
+    <span id="launcher-state" class="badge" role="status">Preparing launcher</span>
+  </header>
+  <noscript><p>Enable JavaScript to load and play Doom 3 in this browser.</p></noscript>
+  <section id="setup" aria-labelledby="setup-title">
+    <div class="setup-heading">
+      <h2 id="setup-title">Your game. In your browser.</h2>
+      <p>Choose the <strong>base</strong> folder from your original Doom 3 installation. Once its nine game archives are loaded, you're ready to play.</p>
+    </div>
+    <div class="setup-grid">
+      <div class="setup-step">
+        <div class="step-label"><span aria-hidden="true">1</span>Choose game files</div>
+        <div class="picker-actions">
+          <button id="pickdir" aria-describedby="datastatus" disabled>Select Doom 3 folder…</button>
+          <input type="file" id="pickfiles" multiple accept=".pk4" hidden>
+          <button id="pickfilesbtn" aria-describedby="datastatus" disabled>Select .pk4 files…</button>
+        </div>
+        <p id="datastatus" class="muted" aria-live="polite">Select pak000.pk4 through pak008.pk4 together.</p>
+        <details class="install-help">
+          <summary>Where are my game files?</summary>
+          <p>In Steam, open Doom 3's installed files with <strong>Browse</strong>, then select its <strong>base</strong> folder. You can also select all nine <code>.pk4</code> files directly.</p>
+          <p>A typical Windows location is <code>Steam/steamapps/common/Doom 3/base</code>. Use the original Doom 3 installation; BFG Edition and expansion files aren't supported.</p>
+          <p>Choosing game archives replaces the previous set. An empty or unrelated selection keeps your loaded files. Loading large archives may take a moment.</p>
+        </details>
+      </div>
+      <div class="setup-step">
+        <div class="step-label"><span aria-hidden="true">2</span>Launch Doom 3</div>
+        <span id="status" role="status">Preparing the game engine…</span>
+        <progress id="progress" value="0" max="100" aria-label="Game files loading progress" style="display:none"></progress>
+        <p class="muted" id="launch-hint">Launch becomes available when the engine and all nine archives are ready.</p>
+        <p id="storage-status" class="muted" role="status">Checking browser saves…</p>
+        <button id="start" class="primary" aria-describedby="launch-hint" disabled>Launch Doom 3</button>
+        <button id="retry" type="button" hidden>Reload launcher</button>
+      </div>
+    </div>
+    <div class="setup-footer"><p>Game files stay in this browser session. Choose them again after reloading. Saves and settings stay in this browser when storage is available. This port includes no game data; use your own copy of Doom 3.</p></div>
+  </section>
+
+  <section id="play-area" aria-label="Game and settings">
+    <div id="viewport">
+      <canvas id="canvas" width="1024" height="768" tabindex="0" aria-label="Doom 3 game" aria-describedby="mouse-status"></canvas>
+      <div class="toolbar" aria-label="Game controls">
+        <button id="focus-game" class="primary" type="button" disabled>Focus game</button>
+        <button id="enable-audio" disabled>Enable audio</button>
+        <button id="screenshot" type="button" disabled title="Download a PNG of the game">Screenshot</button>
+        <label><input type="checkbox" id="usedev" aria-controls="developer-console"> Show console</label>
+      </div>
+    </div>
+    <div class="play-status">
+      <span id="mouse-status" role="status">Mouse is free.</span>
+      <span id="save-status" role="status">Checking browser saves…</span>
+      <span id="screenshot-status" role="status"></span>
+      <a id="screenshot-download" hidden>Download PNG</a>
+    </div>
+    <details id="screenshot-preview" hidden>
+      <summary>View screenshot</summary>
+      <img id="screenshot-image" alt="Last captured Doom 3 screenshot">
+      <button id="screenshot-copy" type="button" hidden disabled>Copy image</button>
+    </details>
+    <details id="graphics">
+      <summary>Graphics options</summary>
+      <p class="muted">Press <kbd>Esc</kbd> to open the game menu before adjusting settings. Apply changes to see them in game.</p>
+      <fieldset id="graphics-controls" disabled>
+        <legend class="muted">Lighting and display</legend>
+        <div class="graphics-grid">
+          <label><input id="graphics-shadows" type="checkbox"> Dynamic shadows</label>
+          <label><input id="graphics-bump" type="checkbox"> Normal maps</label>
+          <label><input id="graphics-specular" type="checkbox"> Specular highlights</label>
+          <label><input id="graphics-particles" type="checkbox"> Soft particles</label>
+          <label for="graphics-gamma">Gamma <input id="graphics-gamma" type="number" min="0.5" max="3" step="0.05" aria-describedby="graphics-status"></label>
+          <label for="graphics-brightness">Brightness <input id="graphics-brightness" type="number" min="0.5" max="2" step="0.05" aria-describedby="graphics-status"></label>
+          <label for="graphics-fps">Frame rate <select id="graphics-fps" aria-describedby="fps-help"><option value="30">30 FPS</option><option value="60" selected>60 FPS</option><option value="0">Unlocked</option></select></label>
+          <label for="graphics-filtering">Texture filtering <select id="graphics-filtering" aria-describedby="filtering-help"><option value="1">Standard</option><option value="2">2× anisotropic</option><option value="4">4× anisotropic</option><option value="8">8× anisotropic</option><option value="16">16× anisotropic</option></select></label>
+        </div>
+        <p id="fps-help" class="muted">Unlocked follows your browser and display refresh rate. Frame limits keep game speed unchanged.</p>
+        <p id="filtering-help" class="muted">Anisotropic filtering sharpens floors and surfaces viewed at an angle.</p>
+        <div class="graphics-actions">
+          <button id="graphics-apply" type="button">Apply graphics</button>
+          <button id="graphics-defaults" type="button">Restore graphics defaults</button>
+        </div>
+      </fieldset>
+      <p id="graphics-status" class="muted" role="status">Start the game to adjust graphics.</p>
+    </details>
+    <details id="controls-help">
+      <summary>How to play</summary>
+      <div class="controls-grid">
+        <p><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> Move</p>
+        <p><kbd>Mouse</kbd> Look · left click to fire</p>
+        <p><kbd>Space</kbd> Jump · <kbd>C</kbd> Crouch</p>
+        <p><kbd>R</kbd> Reload · <kbd>Tab</kbd> PDA</p>
+        <p><kbd>Esc</kbd> Release mouse / game menu</p>
+        <p><kbd>Shift</kbd> + <kbd>Esc</kbd> Engine console</p>
+      </div>
+      <p class="muted">Click the game or use Focus game to capture the mouse. If capture is unavailable, hold the right mouse button and drag to look. Bindings can be changed in the in-game Controls menu.</p>
+    </details>
+  </section>
+
+  <section id="developer-console" aria-labelledby="console-title" hidden>
+    <h2 id="console-title">Engine console</h2>
+    <div id="console" aria-label="Engine output"></div>
+    <form id="command-form">
+      <label for="engine-command">Engine command</label>
+      <input id="engine-command" type="text" autocomplete="off" spellcheck="false">
+      <button id="run-command" disabled>Run command</button>
+    </form>
+  </section>
+</main>
+
+<script>
+  'use strict';
+  var canvas = document.getElementById('canvas');
+  var consoleEl = document.getElementById('console');
+  var statusEl = document.getElementById('status');
+  var dataStatusEl = document.getElementById('datastatus');
+  var progressEl = document.getElementById('progress');
+  var startBtn = document.getElementById('start');
+  var runtimeReady = false;
+  var dataReady = false;
+  var staging = false;
+  var started = false;
+  var savesReady = false;
+  var wantsMouse = false, dragLooking = false, captureFailed = false;
+  var dragX = 0, dragY = 0;
+  var capturePending = false, captureTimer = null, lastCaptureAttempt = -Infinity;
+  var captureFromGesture = false;
+  function mouseLocked() { return document.pointerLockElement === canvas; }
+  function updateMouseStatus() {
+    document.getElementById('mouse-status').textContent = mouseLocked() ? 'Mouse captured.' :
+      (captureFailed && wantsMouse ?
+        'Mouse capture unavailable. Hold the right mouse button to look; click the game to retry.' :
+        'Mouse is free. Click the game to capture it.');
+  }
+  function finishDragLook() {
+    if (!dragLooking) return;
+    dragLooking = false;
+    Module.ccall('Web_SetDragLook', null, ['number'], [0]);
+  }
+  function releaseGameInput() {
+    finishDragLook();
+    if (runtimeReady && started) Module.ccall('Web_ReleaseInput', null, [], []);
+  }
+  function captureFailure(error) {
+    capturePending = false;
+    clearTimeout(captureTimer);
+    captureFailed = true;
+    canvas.style.cursor = 'default';
+    updateMouseStatus();
+    if (error) log('Mouse capture: ' + (error.name || 'error') + ': ' + (error.message || error), true);
+  }
+  // SDL's deferred gesture and retry paths can both request pointer lock.
+  // Share one pending request, handle Promise rejections, and allow a later
+  // click to retry without issuing two requests from the same gesture.
+  if (typeof canvas.requestPointerLock === 'function') {
+    var nativePointerLock = canvas.requestPointerLock.bind(canvas);
+    canvas.requestPointerLock = function () {
+      // A failed host must not be retried by SDL's background grab loop.
+      if (captureFailed && !captureFromGesture) return;
+      if (capturePending || mouseLocked() || Date.now() - lastCaptureAttempt < 250) return;
+      capturePending = true;
+      lastCaptureAttempt = Date.now();
+      captureTimer = setTimeout(function () {
+        if (!mouseLocked()) captureFailure();
+      }, 1500);
+      try {
+        var result = nativePointerLock.apply(null, arguments);
+        if (result && typeof result.catch === 'function') result.catch(captureFailure);
+        return result;
+      } catch (error) { captureFailure(error); }
+    };
+  }
+  function setStaging(busy) {
+    staging = busy;
+    document.getElementById('setup').setAttribute('aria-busy', String(busy));
+    updateStart();
+  }
+  function resumeAudio() {
+    if (!document.getElementById('enable-audio').disabled) {
+      Module.ccall('Web_ResumeAudio', null, [], []);
+    }
+  }
+  document.getElementById('enable-audio').addEventListener('click', resumeAudio);
+  document.getElementById('retry').addEventListener('click', function () { location.reload(); });
+  document.getElementById('focus-game').addEventListener('click', focusGame);
+  document.getElementById('screenshot').addEventListener('click', function () {
+    var button = document.getElementById('screenshot');
+    if (!runtimeReady || !started || button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Capturing…';
+    document.getElementById('screenshot-status').textContent = 'Capturing game image…';
+    try { Module.ccall('Web_QueueCommand', null, ['string'], ['webscreenshot']); }
+    catch (error) { receiveScreenshot(null, error.message); }
+  });
+  var screenshotURL = null;
+  var lastScreenshotBlob = null, screenshotCopyPending = false;
+  function canCopyScreenshot() {
+    return typeof navigator !== 'undefined' && navigator.clipboard &&
+      typeof navigator.clipboard.write === 'function' && typeof ClipboardItem === 'function' &&
+      (!ClipboardItem.supports || ClipboardItem.supports('image/png'));
+  }
+  document.getElementById('screenshot-copy').addEventListener('click', async function () {
+    var button = document.getElementById('screenshot-copy');
+    if (!lastScreenshotBlob || button.disabled || !canCopyScreenshot()) return;
+    var image = lastScreenshotBlob;
+    screenshotCopyPending = true;
+    button.disabled = true;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({'image/png': image})]);
+      if (image === lastScreenshotBlob)
+        document.getElementById('screenshot-status').textContent = 'Screenshot copied. Paste it into another app.';
+    } catch (error) {
+      if (image === lastScreenshotBlob)
+        document.getElementById('screenshot-status').textContent = 'Copy was unavailable. Choose Download PNG to save the image.';
+    } finally {
+      screenshotCopyPending = false;
+      button.disabled = !lastScreenshotBlob;
+    }
+  });
+  function receiveScreenshot(bytes, error) {
+    var button = document.getElementById('screenshot');
+    var status = document.getElementById('screenshot-status');
+    button.textContent = 'Screenshot';
+    button.disabled = !started || document.getElementById('focus-game').disabled;
+    if (!bytes || !bytes.length) {
+      status.textContent = error || 'Could not capture the game. Try again after loading finishes.';
+      return;
+    }
+    var url;
+    try {
+      var image = new Blob([bytes], {type: 'image/png'});
+      url = URL.createObjectURL(image);
+      var link = document.getElementById('screenshot-download');
+      link.href = url;
+      link.download = 'doom3-' + Date.now() + '.png';
+      link.hidden = false;
+      document.getElementById('screenshot-image').src = url;
+      document.getElementById('screenshot-preview').hidden = false;
+      lastScreenshotBlob = image;
+      var copyButton = document.getElementById('screenshot-copy');
+      copyButton.hidden = !canCopyScreenshot();
+      copyButton.disabled = screenshotCopyPending;
+      if (screenshotURL) URL.revokeObjectURL(screenshotURL);
+      screenshotURL = url;
+      status.textContent = 'Screenshot ready. View it below or choose Download PNG to save it.';
+    } catch (downloadError) {
+      status.textContent = 'Could not download the screenshot. Try again.';
+      log('Screenshot download: ' + downloadError, true);
+      if (url && url !== screenshotURL) URL.revokeObjectURL(url);
+    }
+  }
+  // SDL listens on the document. Typing a page command must not also
+  // move the player or invoke a game key binding.
+  ['keydown', 'keyup', 'keypress'].forEach(function (type) {
+    document.addEventListener(type, function (ev) {
+      if (ev.target !== canvas && /^(INPUT|BUTTON|TEXTAREA|SELECT|OPTION|SUMMARY)$/.test(ev.target.tagName)) {
+        ev.stopPropagation();
+      }
+    }, true);
+  });
+  ['mousedown', 'mouseup', 'mousemove', 'wheel'].forEach(function (type) {
+    document.addEventListener(type, function (ev) {
+      if (type === 'mouseup' && dragLooking && ev.button === 2) {
+        finishDragLook();
+        ev.stopPropagation();
+        return;
+      }
+      if (ev.target === canvas && !mouseLocked() && wantsMouse) {
+        if (type === 'mousedown' && ev.button === 2 && captureFailed) {
+          dragLooking = true;
+          dragX = ev.clientX;
+          dragY = ev.clientY;
+          canvas.focus();
+          Module.ccall('Web_SetDragLook', null, ['number'], [1]);
+          ev.preventDefault();
+          ev.stopPropagation();
+          return;
+        }
+        if (type === 'mousemove') {
+          if (dragLooking) {
+            var rect = canvas.getBoundingClientRect();
+            Module.ccall('Web_DragMouse', null, ['number', 'number', 'number', 'number'],
+              [ev.clientX - dragX, ev.clientY - dragY, rect.width, rect.height]);
+            dragX = ev.clientX;
+            dragY = ev.clientY;
+          }
+          ev.stopPropagation();
+          return;
+        }
+      }
+      if (ev.target !== canvas) {
+        if (type === 'mouseup') releaseGameInput();
+        ev.stopPropagation();
+      }
+    }, true);
+  });
+  document.getElementById('usedev').addEventListener('change', function (ev) {
+    document.getElementById('developer-console').hidden = !ev.target.checked;
+  });
+  document.getElementById('command-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var command = document.getElementById('engine-command').value.trim();
+    if (command && !document.getElementById('run-command').disabled) {
+      Module.ccall('Web_QueueCommand', null, ['string'], [command]);
+    }
+  });
+
+  var graphicsFields = ['shadows', 'bump', 'specular', 'particles', 'gamma', 'brightness', 'fps', 'filtering'];
+  var graphicsDefaults = [1, 0, 0, 1, 1, 1, 60, 8];
+  function textureFilteringLimit() {
+    var limit = Module.ccall('Web_GetTextureFilteringLimit', 'number', [], []);
+    if (!Number.isFinite(limit) || limit < 1 || limit > 16) throw new Error('Texture filtering unavailable.');
+    return limit;
+  }
+  function readGraphics() {
+    var limit = textureFilteringLimit();
+    var filtering = document.getElementById('graphics-filtering');
+    filtering.options.length = 5;
+    Array.from(filtering.options).forEach(function (option) { option.disabled = Number(option.value) > limit; });
+    document.getElementById('filtering-help').textContent = limit === 1 ?
+      'This browser supports standard texture filtering.' :
+      'Sharpens surfaces viewed at an angle. This browser supports up to ' + limit + '× anisotropic filtering.';
+    graphicsFields.forEach(function (field, index) {
+      var value = Module.ccall('Web_GetGraphicsOption', 'number', ['number'], [index]);
+      if (!Number.isFinite(value) || value < 0) throw new Error('Graphics settings unavailable');
+      var input = document.getElementById('graphics-' + field);
+      if (index < 4) input.checked = (index === 1 || index === 2) ? !value : !!value;
+      else if (index === 7) {
+        var effective = Math.max(1, Math.min(value, limit));
+        // Preserve valid intermediate settings made through the native menu
+        // or console when applying an unrelated option in this panel.
+        if ([1, 2, 4, 8, 16].indexOf(effective) < 0) {
+          var custom = document.createElement('option');
+          custom.value = String(effective);
+          custom.textContent = effective + '× (current)';
+          filtering.appendChild(custom);
+        }
+        input.value = effective;
+      } else input.value = Math.round(value * 100) / 100;
+    });
+  }
+  function applyGraphics(defaults) {
+    if (!runtimeReady || !started || document.getElementById('graphics-controls').disabled) return;
+    var message = document.getElementById('graphics-status');
+    try {
+      var limit = textureFilteringLimit();
+      var values = graphicsFields.map(function (field, index) {
+        if (defaults) return index === 7 ? Math.min(graphicsDefaults[index], limit) : graphicsDefaults[index];
+        var input = document.getElementById('graphics-' + field);
+        if (index < 4) return (index === 1 || index === 2) ? +!input.checked : +input.checked;
+        // Number('') would silently reset a blank field to zero.
+        return input.value.toString().trim() === '' ? NaN : Number(input.value);
+      });
+      document.getElementById('graphics-gamma').removeAttribute('aria-invalid');
+      document.getElementById('graphics-brightness').removeAttribute('aria-invalid');
+      document.getElementById('graphics-fps').removeAttribute('aria-invalid');
+      document.getElementById('graphics-filtering').removeAttribute('aria-invalid');
+      var invalid = values.findIndex(function (value, index) {
+        return !Number.isFinite(value) || (index < 4 ? (value !== 0 && value !== 1) :
+          (index === 6 ? value !== 0 && value !== 30 && value !== 60 :
+            (index === 7 ? value < 1 || value > limit :
+              value < 0.5 || value > (index === 4 ? 3 : 2))));
+      });
+      if (invalid >= 0) {
+        var badField = document.getElementById('graphics-' + graphicsFields[invalid]);
+        badField.setAttribute('aria-invalid', 'true');
+        badField.focus();
+        throw new Error(invalid === 6 ? 'Choose 30 FPS, 60 FPS, or Unlocked.' :
+          (invalid === 7 ? 'Choose a supported texture filtering level.' :
+            'Enter gamma from 0.5 to 3 and brightness from 0.5 to 2.'));
+      }
+      values.forEach(function (value, index) {
+        if (!Module.ccall('Web_SetGraphicsOption', 'number', ['number', 'number'], [index, value])) {
+          throw new Error('The engine could not apply graphics settings.');
+        }
+      });
+      readGraphics();
+      message.textContent = (defaults ? 'Graphics defaults restored.' : 'Graphics applied.') +
+        (savesReady ? ' Will be saved with your browser configuration.' : ' Browser saving is unavailable.');
+    } catch (error) { message.textContent = error.message; }
+  }
+  document.getElementById('graphics').addEventListener('toggle', function () {
+    if (this.open && started && !document.getElementById('graphics-controls').disabled) {
+      try { readGraphics(); } catch (error) { document.getElementById('graphics-status').textContent = error.message; }
+    }
+  });
+  document.getElementById('graphics-apply').addEventListener('click', function () { applyGraphics(false); });
+  document.getElementById('graphics-defaults').addEventListener('click', function () { applyGraphics(true); });
+
+  function log(text, isErr) {
+    var line = (isErr ? '[err] ' : '') + text + '\n';
+    consoleEl.textContent += line;
+    // cap log size
+    if (consoleEl.textContent.length > 200000) {
+      consoleEl.textContent = consoleEl.textContent.slice(-200000);
+    }
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+
+  function setStatus(t) { statusEl.textContent = t; }
+  function showEngineFailure(message) {
+    started = true;
+    updateStart();
+    document.body.className = '';
+    document.getElementById('setup').className = '';
+    document.getElementById('launcher-state').textContent = 'Engine unavailable';
+    document.getElementById('retry').hidden = false;
+    document.getElementById('focus-game').disabled = true;
+    document.getElementById('enable-audio').disabled = true;
+    document.getElementById('screenshot').disabled = true;
+    document.getElementById('graphics-controls').disabled = true;
+    document.getElementById('run-command').disabled = true;
+    progressEl.style.display = 'none';
+    document.getElementById('launch-hint').textContent = 'Reload, then choose your game files again. Browser saves are kept when storage is available.';
+    setStatus(message + ' Reload this page before trying again.');
+    document.getElementById('developer-console').hidden = false;
+    document.getElementById('usedev').checked = true;
+    document.getElementById('retry').focus();
+  }
+  // Optional development trace: identify the actual WebGL call that fails,
+  // rather than only reporting a accumulated error at the end of a frame.
+  if (typeof location !== 'undefined' && location.search.indexOf('gl-debug=1') >= 0) {
+    var glProto = window.WebGL2RenderingContext && window.WebGL2RenderingContext.prototype;
+    if (glProto) {
+      var readGLError = glProto.getError;
+      var tracedErrors = 0;
+      var traceSeen = Object.create(null);
+      Object.getOwnPropertyNames(glProto).forEach(function (name) {
+        var desc = Object.getOwnPropertyDescriptor(glProto, name);
+        if (name === 'getError' || name === 'constructor' || !desc || typeof desc.value !== 'function') return;
+        var original = desc.value;
+        glProto[name] = function () {
+          var result = original.apply(this, arguments);
+          var error = readGLError.call(this);
+          var traceKey = name + ':' + error;
+          if (error && !traceSeen[traceKey] && tracedErrors++ < 40) {
+            traceSeen[traceKey] = true;
+            log('WebGL ' + name + ': 0x' + error.toString(16) + ' ' +
+                Array.prototype.map.call(arguments, function (arg) {
+                  if (ArrayBuffer.isView(arg)) return arg.constructor.name + '[' + arg.byteLength + ' bytes]';
+                  return String(arg);
+                }).join(', '), true);
+          }
+          return result;
+        };
+      });
+    }
+  }
+  function updateStart() {
+    startBtn.disabled = started || staging || !(runtimeReady && dataReady);
+    document.getElementById('pickdir').disabled = staging || started || !runtimeReady;
+    document.getElementById('pickfilesbtn').disabled = staging || started || !runtimeReady;
+    document.getElementById('launcher-state').textContent = started ? 'Game running' :
+      (staging ? 'Loading game files' : (dataReady && runtimeReady ? 'Ready to play' :
+        (runtimeReady ? 'Choose game files' : 'Preparing launcher')));
+    if (runtimeReady && dataReady && !staging && !started) {
+      setStatus('Ready to launch.');
+      document.getElementById('launch-hint').textContent = 'Choose a new game or load a save from the game menu after launching.';
+    } else if (!started) {
+      document.getElementById('launch-hint').textContent = staging ?
+        'Keep this page open while your game files load.' :
+        'Launch becomes available when the engine and all nine archives are ready.';
+    }
+  }
+
+  function finishRuntimeInitialization() {
+    // Persistent storage is optional; a working MEMFS still permits play.
+    runtimeReady = true;
+    if (!missingArchives().length) {
+      dataReady = true;
+      dataStatusEl.textContent = 'All 9 game archives are ready.';
+      dataStatusEl.className = 'ok';
+      log('Preloaded game data detected, picker optional.');
+    } else {
+      setStatus('Engine ready. Choose your game files.');
+    }
+    updateStart();
+  }
+
+  // Emscripten Module — must exist before the generated script runs
+  // (emcc inserts the engine loader at the end of this document).
+  var Module = {
+    canvas: canvas,
+    onMouseModeChange: function (wanted) {
+      wantsMouse = wanted;
+      if (!wanted) finishDragLook();
+      updateMouseStatus();
+    },
+    onScreenshotReady: receiveScreenshot,
+    noInitialRun: true, // we callMain() after game data + IDBFS are ready
+    print: function (text) { log(text, false); },
+    printErr: function (text) { log(text, true); },
+    onAbort: function (reason) {
+      log('Engine stopped: ' + reason, true);
+      showEngineFailure('The game engine stopped.');
+    },
+    onRuntimeInitialized: function () {
+      // IDBFS backing for saves/configs (mirrors desktop PATH_SAVE).
+      try {
+        FS.mkdirTree('/home/web_user/.local/share/dhewm3');
+        FS.mount(IDBFS, { autoPersist: true }, '/home/web_user/.local/share/dhewm3');
+        FS.syncfs(true, function (err) {
+          savesReady = !err;
+          document.getElementById('save-status').textContent = err ?
+            'Browser saves unavailable. Progress may be lost when you close this page.' :
+            'Browser saves enabled.';
+          if (err) { log('IDBFS initial sync failed: ' + err, true); }
+          else { log('IDBFS save path ready.'); }
+          document.getElementById('storage-status').textContent = document.getElementById('save-status').textContent;
+          finishRuntimeInitialization();
+        });
+      } catch (e) {
+        log('Filesystem init failed: ' + e, true);
+        savesReady = false;
+        document.getElementById('save-status').textContent = 'Browser saves unavailable. Progress may be lost when you close this page.';
+        document.getElementById('storage-status').textContent = document.getElementById('save-status').textContent;
+        try {
+          FS.mkdirTree('/home/web_user/.local/share/dhewm3');
+          finishRuntimeInitialization();
+        } catch (storageError) {
+          showEngineFailure('Could not prepare game storage.');
+        }
+      }
+      // IDBFS autoPersist batches writes when files close. Parallel manual
+      // syncs can race that queue; do not start additional periodic flushes.
+    }
+  };
+
+  // ---- game data loading -------------------------------------------------
+  // Files land in MEMFS at /doom3/base/<name>; engine gets +set fs_basepath /doom3.
+  var stagedCount = 0;
+
+  function missingArchives() {
+    var missing = [];
+    for (var i = 0; i < 9; i++) {
+      var name = 'pak00' + i + '.pk4';
+      try {
+        var stat = FS.stat('/doom3/base/' + name);
+        if (!FS.isFile(stat.mode) || stat.size === 0) { missing.push(name); }
+      } catch (e) { missing.push(name); }
+    }
+    return missing;
+  }
+
+  function resetStaging() {
+    stagedCount = 0;
+    dataReady = false;
+    dataStatusEl.textContent = '0 of 9 game archives loaded. Loading your selection…';
+    dataStatusEl.className = 'muted';
+    try {
+      FS.readdir('/doom3/base').forEach(function (name) {
+        if (/\.pk4$/i.test(name)) { FS.unlink('/doom3/base/' + name); }
+      });
+    } catch (e) {}
+    updateStart();
+  }
+
+  function archiveName(fullPath) {
+    // fullPath like "Doom 3/base/pak000.pk4" or just "pak000.pk4"
+    var parts = fullPath.split('/');
+    var name = parts.pop().toLowerCase();
+    // Selecting the whole Steam install must not overwrite base paks with
+    // expansion or mod paks of the same name. Flat file selection still works.
+    if (parts.length && parts[parts.length - 1].toLowerCase() !== 'base') return null;
+    return /^pak00[0-8]\.pk4$/.test(name) ? name : null;
+  }
+
+  function stageFile(fullPath, arrayBuffer) {
+    var name = archiveName(fullPath);
+    if (!name) return false;
+    var dir = '/doom3/base';
+    try {
+      FS.mkdirTree(dir);
+      // Transfer this buffer to MEMFS instead of duplicating hundred-MB paks.
+      FS.writeFile(dir + '/' + name, new Uint8Array(arrayBuffer), { canOwn: true });
+      stagedCount++;
+      dataStatusEl.textContent = (9 - missingArchives().length) + ' of 9 game archives loaded. Loading your selection…';
+      return true;
+    } catch (e) {
+      log('Failed to stage ' + name + ': ' + e, true);
+      return false;
+    }
+  }
+
+  function finishStaging() {
+    setStaging(false);
+    if (stagedCount === 0) {
+      dataStatusEl.textContent = 'No original game archives could be loaded. Choose the base folder or select all nine .pk4 files.';
+      dataStatusEl.className = 'note';
+      progressEl.style.display = 'none';
+      setStatus('Select the Doom 3 base folder or pak000.pk4 through pak008.pk4.');
+      return;
+    }
+    var missing = missingArchives();
+    dataReady = missing.length === 0;
+    dataStatusEl.textContent = (9 - missing.length) + ' of 9 game archives loaded.' +
+      (missing.length ? ' Missing or empty: ' + missing.join(', ') + '. Select all nine together to try again.' : ' Ready to play.');
+    dataStatusEl.className = missing.length ? 'note' : 'ok';
+    if (missing.length) setStatus('Select all nine original Doom 3 archives to enable launch.');
+    progressEl.style.display = 'none';
+    updateStart();
+    if (dataReady) startBtn.focus();
+  }
+
+  function stageFileList(files) {
+    if (staging || started || !runtimeReady) return;
+    var list = Array.prototype.slice.call(files).filter(function (f) {
+      return archiveName(f.webkitRelativePath || f.name);
+    });
+    if (!list.length) {
+      setStatus('No original Doom 3 archives found in that selection. Choose the base folder or all nine .pk4 files.');
+      return;
+    }
+    setStaging(true);
+    resetStaging();
+    progressEl.style.display = '';
+    progressEl.value = 0;
+    var i = 0;
+    function next() {
+      if (i >= list.length) { finishStaging(); return; }
+      var f = list[i++];
+      // webkitdirectory entries carry webkitRelativePath; plain inputs just names
+      var path = f.webkitRelativePath || f.name;
+      setStatus('Loading ' + f.name + ' (' + i + ' of ' + list.length + ')…');
+      var reader = new FileReader();
+      reader.onload = function () {
+        stageFile(path, reader.result);
+        progressEl.value = Math.round(100 * i / list.length);
+        // yield so the progress bar paints between multi-hundred-MB paks
+        setTimeout(next, 0);
+      };
+      reader.onerror = function () {
+        log('Failed to read ' + path, true);
+        setTimeout(next, 0);
+      };
+      try { reader.readAsArrayBuffer(f); }
+      catch (e) { log('Failed to read ' + path + ': ' + e, true); setTimeout(next, 0); }
+    }
+    next();
+  }
+
+  document.getElementById('pickfilesbtn').addEventListener('click', function () {
+    document.getElementById('pickfiles').click();
+  });
+  document.getElementById('pickfiles').addEventListener('change', function (ev) {
+    if (ev.target.files.length) { stageFileList(ev.target.files); }
+    ev.target.value = ''; // selecting the same archives again must fire change
+  });
+
+  document.getElementById('pickdir').addEventListener('click', function () {
+    if (staging || started || !runtimeReady) return;
+    // Preferred: real directory picker (Chrome/Edge). Fallback: <input webkitdirectory>.
+    if (window.showDirectoryPicker) {
+      (async function () {
+        try {
+          var dir = await window.showDirectoryPicker();
+          if (staging || started) return;
+          setStaging(true);
+          progressEl.style.display = '';
+          progressEl.removeAttribute('value');
+          setStatus('Looking for original Doom 3 archives…');
+          var candidates = [];
+          async function walk(handle, prefix) {
+            for await (var entry of handle.values()) {
+              if (entry.kind === 'file') {
+                if (!archiveName(prefix + entry.name)) continue;
+                candidates.push({entry: entry, path: prefix + entry.name});
+              } else if (entry.kind === 'directory') {
+                await walk(entry, prefix + entry.name + '/');
+              }
+            }
+          }
+          await walk(dir, '');
+          if (!candidates.length) {
+            setStaging(false);
+            progressEl.style.display = 'none';
+            setStatus('No original Doom 3 archives found in that folder. Choose the base folder or all nine .pk4 files.');
+            return;
+          }
+          // Discover first: an unrelated folder must not discard a ready set.
+          resetStaging();
+          progressEl.value = 0;
+          for (var i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i];
+            setStatus('Loading ' + candidate.entry.name + ' (' + (i + 1) + ' of ' + candidates.length + ')…');
+            try {
+              var file = await candidate.entry.getFile();
+              var buf = await file.arrayBuffer();
+              stageFile(candidate.path, buf);
+            } catch (readError) {
+              log('Failed to read ' + candidate.path + ': ' + readError, true);
+            }
+            progressEl.value = Math.round(100 * (i + 1) / candidates.length);
+            await new Promise(function (resolve) { setTimeout(resolve, 0); });
+          }
+          finishStaging();
+        } catch (e) {
+          if (e && e.name !== 'AbortError') {
+            log('Folder pick failed: ' + e, true);
+            if (!staging) setStatus('The folder picker is unavailable. Use Select .pk4 files instead.');
+          }
+          if (staging) {
+            setStaging(false);
+            progressEl.style.display = 'none';
+            setStatus('Could not read that folder. Use Select .pk4 files instead.');
+          }
+        }
+      })();
+    } else {
+      // fallback: directory input element
+      var inp = document.createElement('input');
+      inp.type = 'file';
+      inp.setAttribute('webkitdirectory', '');
+      inp.addEventListener('change', function (ev) {
+        if (ev.target.files.length) { stageFileList(ev.target.files); }
+      });
+      inp.click();
+    }
+  });
+
+  // ---- start ---------------------------------------------------------------
+  startBtn.addEventListener('click', function () {
+    if (started || staging || !runtimeReady || !dataReady) return;
+    started = true;
+    updateStart();
+    // OpenAL creates its WebAudio context during main(); resume it below
+    // while this Start click still supplies browser user activation.
+    setStatus('Starting… (click the canvas to capture the mouse)');
+    document.body.className = 'playing';
+    try {
+      Module.callMain(['+set', 'fs_basepath', '/doom3', '+set', 'in_tty', '0']);
+      document.getElementById('setup').className = 'done';
+      document.getElementById('focus-game').disabled = false;
+      document.getElementById('run-command').disabled = false;
+      document.getElementById('enable-audio').disabled = false;
+      document.getElementById('screenshot').disabled = false;
+      try {
+        readGraphics();
+        document.getElementById('graphics-controls').disabled = false;
+        document.getElementById('graphics-status').textContent = 'Current engine settings. Changes take effect when applied.';
+      } catch (error) { document.getElementById('graphics-status').textContent = error.message; }
+      resumeAudio();
+      if (typeof location !== 'undefined' && location.search.indexOf('gl-debug=1') >= 0) {
+        var debugCommand = new URLSearchParams(location.search).get('command');
+        if (debugCommand) Module.ccall('Web_QueueCommand', null, ['string'], [debugCommand]);
+      }
+      canvas.focus();
+    } catch (e) {
+      log('Start failed: ' + (e.stack || e), true);
+      showEngineFailure('The engine could not start.');
+    }
+  });
+
+  // ---- canvas input ----------------------------------------------------------
+  function focusGame() {
+    if (!started || document.getElementById('focus-game').disabled) return;
+    canvas.focus();
+    resumeAudio();
+    if (started && wantsMouse && !mouseLocked()) {
+      if (typeof canvas.requestPointerLock === 'function') {
+        captureFromGesture = true;
+        try { canvas.requestPointerLock(); }
+        finally { captureFromGesture = false; }
+      }
+      else captureFailure();
+    }
+  }
+  canvas.addEventListener('click', focusGame);
+  document.addEventListener('pointerlockchange', function () {
+    capturePending = false;
+    clearTimeout(captureTimer);
+    finishDragLook();
+    if (runtimeReady && started) {
+      Module.ccall('Web_SetMouseCaptured', null, ['number'], [mouseLocked() ? 1 : 0]);
+    }
+    if (mouseLocked()) captureFailed = false;
+    updateMouseStatus();
+  });
+  document.addEventListener('pointerlockerror', function () { captureFailure(); });
+  canvas.addEventListener('mouseleave', finishDragLook);
+  canvas.addEventListener('blur', releaseGameInput);
+  window.addEventListener('blur', releaseGameInput);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) releaseGameInput();
+  });
+  canvas.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+</script>
+
+{{{ SCRIPT }}}
+</body>
+</html>

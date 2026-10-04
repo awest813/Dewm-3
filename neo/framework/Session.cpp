@@ -37,6 +37,11 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "framework/Session_local.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+extern "C" void R_GLES_PerfPhase( int phase, double cpuMs );
+#endif
+
 #if defined(__AROS__)
 #define CDKEY_FILEPATH CDKEY_FILE
 #define XPKEY_FILEPATH XPKEY_FILE
@@ -519,6 +524,12 @@ idSessionLocal::CompleteWipe
 ================
 */
 void idSessionLocal::CompleteWipe() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// A blocking wipe cannot advance the cooperative browser clock.
+	wipeStopTic = 0;
+	UpdateScreen( true );
+	return;
+#endif
 	if ( com_ticNumber == 0 ) {
 		// if the async thread hasn't started, we would hang here
 		wipeStopTic = 0;
@@ -539,6 +550,11 @@ idSessionLocal::ShowLoadingGui
 ================
 */
 void idSessionLocal::ShowLoadingGui() {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	console->Close();
+	session->UpdateScreen( false );
+	return;
+#endif
 	if ( com_ticNumber == 0 ) {
 		return;
 	}
@@ -2620,16 +2636,30 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 		Sys_GrabMouseCursor( false );
 	}
 
+#ifdef __EMSCRIPTEN__
+	double webDrawStart = emscripten_get_now();
+#endif
 	renderSystem->BeginFrame( renderSystem->GetScreenWidth(), renderSystem->GetScreenHeight() );
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfPhase(4, emscripten_get_now() - webDrawStart);
+	webDrawStart = emscripten_get_now();
+#endif
 
 	// draw everything
 	Draw();
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfPhase(5, emscripten_get_now() - webDrawStart);
+	webDrawStart = emscripten_get_now();
+#endif
 
 	if ( com_speeds.GetBool() ) {
 		renderSystem->EndFrame( &time_frontend, &time_backend );
 	} else {
 		renderSystem->EndFrame( NULL, NULL );
 	}
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfPhase(6, emscripten_get_now() - webDrawStart);
+#endif
 
 	insideUpdateScreen = false;
 }
@@ -2722,6 +2752,11 @@ void idSessionLocal::Frame() {
 		minTic = latchedTicNumber;
 	}
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+	// Async input/audio ticks run after event processing on this browser thread.
+	// Waiting here prevents the browser from ever scheduling the next frame.
+	latchedTicNumber = com_ticNumber;
+#else
 	while( 1 ) {
 		latchedTicNumber = com_ticNumber;
 		if ( latchedTicNumber >= minTic ) {
@@ -2729,6 +2764,7 @@ void idSessionLocal::Frame() {
 		}
 		Sys_WaitForEvent( TRIGGER_EVENT_ONE );
 	}
+#endif
 
 	if ( authEmitTimeout ) {
 		// waiting for a game auth

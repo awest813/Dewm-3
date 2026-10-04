@@ -58,8 +58,7 @@ jobs:
           file build/dhewm3
           ldd build/dhewm3 | grep -E 'openal|SDL2|curl' || true
           # dhewm3 -h may exit non-zero; capture output and confirm it ran
-          ./build/dhewm3 -h > smoke.log 2>&1 || true
-          head -n 20 smoke.log
+          bash scripts/check-engine.sh build/dhewm3
 
       - name: Package (tarball)
         run: |
@@ -74,4 +73,4 @@ jobs:
             build/dhewm3
             build/*.so
             dhewm3-linux-${{ matrix.arch }}.tar.gz
-          if-no-files-found: warn
+          if-no-files-found: error

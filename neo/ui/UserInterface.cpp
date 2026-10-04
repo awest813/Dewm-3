@@ -35,6 +35,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/Window.h"
 
 #include "ui/UserInterfaceLocal.h"
+#ifdef __EMSCRIPTEN__
+#include "ui/WebMenuPolicy.h"
+#endif
 
 #include "renderer/tr_local.h" // glConfig for winWidth/winHeight
 
@@ -313,6 +316,41 @@ bool idUserInterfaceLocal::InitFromFile( const char *qpath, bool rebuild, bool c
 		}
 
 		state.Set( "name", qpath );
+#ifdef __EMSCRIPTEN__
+		if (Web_IsStockMenu(qpath)) {
+			for (const webMenuChoice_t &option : webMenuChoices) {
+				drawWin_t *control = desktop->FindChildByName(option.window);
+				if (!control || !control->win) continue;
+				idWinVar *cvar = control->win->GetWinVarByName("cvar");
+				const char *expected = option.replacementCvar ? option.replacementCvar : option.originalCvar;
+				// InitVars replaces the value with the current number; the name
+				// retains the binding. Undefined legacy cvars keep their value.
+				if (!cvar || idStr::Icmp(*cvar->GetName() ? cvar->GetName() : cvar->c_str(), expected)) continue;
+				desktop->SetChildWinVarVal(option.titleWindow, "text", option.title);
+				if (option.readOnly) desktop->SetChildWinVarVal(option.titleWindow, "forecolor", "0.5 0.6 0.65 1");
+			}
+			desktop->SetChildWinVarVal("OSWarning", "text", "Apply texture changes to continue.");
+			desktop->SetChildWinVarVal("OS1Title", "text", "Texture quality");
+			desktop->SetChildWinVarVal("RDGTitleText", "text", "Reset all options");
+			desktop->SetChildWinVarVal("RDGText", "text", "Reset controls, gameplay, graphics and volume? Texture quality becomes Medium. Browser display settings and saved games are kept.");
+			desktop->SetChildWinVarVal("OSBtn1A", "text", "Use balanced");
+			desktop->SetChildWinVarVal("OSBtn1A2", "text", "texture");
+			desktop->SetChildWinVarVal("OSBtn1A3", "text", "quality");
+			desktop->SetChildWinVarVal("RDSTitleText", "text", "Apply graphics");
+			desktop->SetChildWinVarVal("RDSText", "text", "Apply texture quality changes now? This reloads textures while keeping the game and audio running.");
+			desktop->SetChildWinVarVal("RDSYesBtnText", "text", "Apply");
+			if (!desktop->FindChildByName("RDSYesBtnText")) {
+				drawWin_t *apply = desktop->FindChildByName("RDSCancelBtnText");
+				if (apply && apply->win) {
+					desktop->SetChildWinVarVal("RDSCancelBtnText", "text", "Apply");
+					apply->win->AddWebApplyRelease();
+				}
+			}
+			desktop->SetChildWinVarVal("UQTitleText", "text", "Ultra texture quality");
+			desktop->SetChildWinVarVal("UQText", "text", "Ultra uses full-size, uncompressed textures. Select Continue, then Apply to reload them.");
+			desktop->SetChildWinVarVal("UQYesBtnText", "text", "Continue");
+		}
+#endif
 	} else {
 		desktop->SetDC( &uiManagerLocal.dc );
 		desktop->SetFlag( WIN_DESKTOP );

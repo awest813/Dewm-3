@@ -42,7 +42,13 @@ If you have questions concerning this license or the applicable additional terms
 	#endif
 #endif
 
+#ifdef __EMSCRIPTEN__
+// WebGL2/GLES3 path (see renderer/qgl_gles.h + docs/WEB.md). Desktop
+// SDL_opengl.h must NOT be included here — it conflicts with GLES3 headers.
+#include "renderer/qgl_gles.h"
+#else
 #include <SDL_opengl.h>
+#endif
 
 #if defined( ID_DEDICATED ) && defined( _WIN32 )
 // restore WINGDIAPI

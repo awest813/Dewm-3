@@ -33,6 +33,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/UserInterfaceLocal.h"
 
 #include "ui/SliderWindow.h"
+#ifdef __EMSCRIPTEN__
+#include "ui/WebMenuPolicy.h"
+#endif
 
 /*
 ============
@@ -144,6 +147,14 @@ const char *idSliderWindow::HandleEvent(const sysEvent_t *event, bool *updateVis
 	if ( key == K_LEFTARROW || key == K_KP_LEFTARROW || ( key == K_MOUSE2 && gui->CursorY() < thumbRect.y ) ) {
 		value = value - stepSize;
 	}
+
+#ifdef __EMSCRIPTEN__
+	// Clamp before publishing: Draw's later visual clamp does not repair the
+	// cvar written by a keyboard step past either end of a stock menu slider.
+	if (Web_IsStockMenu(gui->GetSourceFile())) {
+		value = idMath::ClampFloat(low, high, value);
+	}
+#endif
 
 	if (buddyWin) {
 		buddyWin->HandleBuddyUpdate(this);

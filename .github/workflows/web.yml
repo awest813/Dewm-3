@@ -1,0 +1,122 @@
+name: Web build
+
+# Compile the experimental engine without proprietary game data.
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'neo/CMakePresets.json'
+      - 'neo/CMakeLists.txt'
+      - 'neo/**'
+      - 'web/**'
+      - 'scripts/web-*.sh'
+      - 'docs/WEB.md'
+      - 'tests/render_program_state_check.py'
+      - 'tests/render_shader_check.py'
+      - 'tests/test_web_shell.js'
+      - 'tests/web_mouse_check.py'
+      - 'tests/web_gameplay_check.py'
+      - 'tests/web_menu_check.py'
+      - 'tests/gameplay_parity*'
+      - 'tests/save_weapon_parity.cfg'
+      - 'tests/test_gameplay_parity.py'
+      - '.github/workflows/web.yml'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'neo/CMakePresets.json'
+      - 'neo/CMakeLists.txt'
+      - 'neo/**'
+      - 'web/**'
+      - 'scripts/web-*.sh'
+      - 'docs/WEB.md'
+      - 'tests/render_program_state_check.py'
+      - 'tests/render_shader_check.py'
+      - 'tests/test_web_shell.js'
+      - 'tests/web_mouse_check.py'
+      - 'tests/web_gameplay_check.py'
+      - 'tests/web_menu_check.py'
+      - 'tests/gameplay_parity*'
+      - 'tests/save_weapon_parity.cfg'
+      - 'tests/test_gameplay_parity.py'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Web scaffolding smoke
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate CMake presets JSON
+        run: |
+          python3 -c "import json; d=json.load(open('neo/CMakePresets.json')); print([p['name'] for p in d['configurePresets']])"
+          cmake -S neo --list-presets
+
+      - name: Check web-wasm preset present
+        run: cmake -S neo --list-presets | grep -q 'web-wasm'
+
+      - name: Check web files and shell hooks
+        run: |
+          test -f web/shell.html
+          test -f web/serve.py
+          test -f scripts/web-setup.sh
+          test -f scripts/web-run.sh
+          test -f docs/WEB.md
+          grep -q 'HARDLINK_GAME' neo/CMakePresets.json
+          grep -q '{{{ SCRIPT }}}' web/shell.html
+          grep -q 'noInitialRun' web/shell.html
+          grep -q 'IDBFS' web/shell.html
+          grep -q 'fs_basepath' web/shell.html
+          grep -q 'WEB_PRELOAD_DIR' neo/CMakeLists.txt
+
+      - name: Syntax-check scripts
+        run: |
+          bash -n scripts/web-setup.sh
+          bash -n scripts/web-run.sh
+          python3 -m py_compile web/serve.py
+
+      - name: Check web shell data and input handling
+        run: node tests/test_web_shell.js
+
+  compile:
+    name: Emscripten compile and link
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install pinned Emscripten SDK
+        run: |
+          git init "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" remote add origin https://github.com/emscripten-core/emsdk.git
+          git -C "$RUNNER_TEMP/emsdk" fetch --depth 1 origin c0bb220cb6e6f4e0fabb6f6db9efd53390ef5e56
+          git -C "$RUNNER_TEMP/emsdk" checkout --detach FETCH_HEAD
+          "$RUNNER_TEMP/emsdk/emsdk" install 4.0.23
+          "$RUNNER_TEMP/emsdk/emsdk" activate 4.0.23
+      - name: Configure and build without game data
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          bash scripts/web-setup.sh --check-only
+          cmake -S neo --preset web-wasm
+          cmake --build build-web --parallel 2
+          test -s build-web/dhewm3.html
+          test -s build-web/dhewm3.js
+          test -s build-web/dhewm3.wasm
+      - name: Check renderer program transitions
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          python3 tests/render_program_state_check.py build-web/render-state-check.cpp
+          em++ build-web/render-state-check.cpp -sENVIRONMENT=node -o build-web/render-state-check.js
+          node build-web/render-state-check.js
+          python3 tests/render_shader_check.py build-web/render-check.html
+          python3 tests/test_gameplay_parity.py
+          python3 tests/web_mouse_check.py build-web/web-mouse-check.cpp
+          em++ build-web/web-mouse-check.cpp -sENVIRONMENT=node -o build-web/web-mouse-check.js
+          node build-web/web-mouse-check.js
+          python3 tests/web_gameplay_check.py build-web/web-gameplay-check.cpp
+          em++ build-web/web-gameplay-check.cpp -O3 -ffinite-math-only -sENVIRONMENT=node -o build-web/web-gameplay-check.js
+          node build-web/web-gameplay-check.js
+          python3 tests/web_menu_check.py build-web/web-menu-check.cpp
+          em++ build-web/web-menu-check.cpp -sENVIRONMENT=node -o build-web/web-menu-check.js
+          node build-web/web-menu-check.js

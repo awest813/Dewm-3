@@ -38,6 +38,11 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+extern "C" void R_GLES_PerfPhase( int phase, double cpuMs );
+#endif
+
 idRenderSystemLocal	tr;
 idRenderSystem	*renderSystem = &tr;
 
@@ -705,15 +710,29 @@ void idRenderSystemLocal::EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	cmd->commandId = RC_SWAP_BUFFERS;
 
 	// start the back end up again with the new command list
+#ifdef __EMSCRIPTEN__
+	double webSubmitStart = emscripten_get_now();
+#endif
 	R_IssueRenderCommands();
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfPhase(7, emscripten_get_now() - webSubmitStart);
+	webSubmitStart = emscripten_get_now();
+#endif
 
 	// use the other buffers next frame, because another CPU
 	// may still be rendering into the current buffers
 
 	R_ToggleSmpFrame();
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfPhase(8, emscripten_get_now() - webSubmitStart);
+	webSubmitStart = emscripten_get_now();
+#endif
 
 	// we can now release the vertexes used this frame
 	vertexCache.EndFrame();
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfPhase(9, emscripten_get_now() - webSubmitStart);
+#endif
 
 	if ( session->writeDemo ) {
 		session->writeDemo->WriteInt( DS_RENDER );

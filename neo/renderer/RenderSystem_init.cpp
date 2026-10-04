@@ -39,6 +39,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/UserInterface.h"
 
 #include "renderer/tr_local.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "framework/GameCallbacks_local.h"
 
@@ -382,6 +385,13 @@ R_CheckPortableExtensions
 ==================
 */
 static void R_CheckPortableExtensions( void ) {
+#ifdef __EMSCRIPTEN__
+	// WebGL2 path (see renderer/tr_gles.cpp + docs/WEB.md): fixed desktop
+	// extension checks don't apply — glGetString(GL_EXTENSIONS) returns NULL
+	// on core profiles and ARB assembly programs don't exist on GLES.
+	R_GLES_InitConfig();
+	return;
+#else
 	glConfig.glVersion = atof( glConfig.version_string );
 
 	// GL_ARB_multitexture
@@ -577,6 +587,7 @@ static void R_CheckPortableExtensions( void ) {
 			common->Printf( "X..GL_ARB_debug_output not found\n" );
 		}
 	}
+#endif // !__EMSCRIPTEN__ (GLES path returns early via R_GLES_InitConfig)
 }
 
 
@@ -808,12 +819,16 @@ void R_InitOpenGL( void ) {
 	}
 
 // load qgl function pointers
+#ifdef __EMSCRIPTEN__
+	R_GLES_LoadFunctions();
+#else
 #define QGLPROC(name, rettype, args) \
 	q##name = (rettype(APIENTRYP)args)GLimp_ExtensionPointer(#name); \
 	if (!q##name) \
 		common->FatalError("Unable to initialize OpenGL (%s)", #name);
 
 #include "renderer/qgl_proc.h"
+#endif
 
 	// input and sound systems need to be tied to the new window
 	Sys_InitInput();
@@ -823,7 +838,13 @@ void R_InitOpenGL( void ) {
 	glConfig.vendor_string = (const char *)qglGetString(GL_VENDOR);
 	glConfig.renderer_string = (const char *)qglGetString(GL_RENDERER);
 	glConfig.version_string = (const char *)qglGetString(GL_VERSION);
+#ifdef __EMSCRIPTEN__
+	// glGetString(GL_EXTENSIONS) returns NULL on core profiles (incl. WebGL2);
+	// R_GLES_InitConfig() installs a synthetic non-NULL string instead.
+	glConfig.extensions_string = "";
+#else
 	glConfig.extensions_string = (const char *)qglGetString(GL_EXTENSIONS);
+#endif
 
 	// OpenGL driver constants
 	qglGetIntegerv( GL_MAX_TEXTURE_SIZE, &temp );
@@ -898,6 +919,14 @@ GL_CheckErrors
 ==================
 */
 void GL_CheckErrors( void ) {
+#ifdef __EMSCRIPTEN__
+	// WebGL error queries can synchronize with the browser's GPU process.
+	// Leave them available for diagnostics, but avoid a per-frame stall when
+	// error reporting is explicitly disabled (the normal gameplay default).
+	if ( r_ignoreGLErrors.GetBool() ) {
+		return;
+	}
+#endif
 	int		err;
 	char	s[64];
 	int		i;
@@ -1318,6 +1347,7 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 
 	int	oldWidth = glConfig.vidWidth;
 	int oldHeight = glConfig.vidHeight;
+	bool oldScissor = r_useScissor.GetBool();
 
 	tr.tiledViewport[0] = width;
 	tr.tiledViewport[1] = height;
@@ -1373,7 +1403,7 @@ void R_ReadTiledPixels( int width, int height, byte *buffer, renderView_t *ref =
 		}
 	}
 
-	r_useScissor.SetBool( true );
+	r_useScissor.SetBool( oldScissor );
 
 	tr.viewportOffset[0] = 0;
 	tr.viewportOffset[1] = 0;
@@ -1463,6 +1493,14 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 	}
 	else {
 		f = fileSystem->OpenFileWrite( fileName );
+	}
+	if (!f) {
+		common->Warning("Could not write screenshot %s", fileName);
+		g_screenshotFormat = -1;
+		R_StaticFree(buffer);
+		R_StaticFree(swapBuffer);
+		takingScreenshot = false;
+		return;
 	}
 
 	// If no specific format is requested, default to using the CVar value.
@@ -1622,6 +1660,60 @@ void R_ScreenShot_f( const idCmdArgs &args ) {
 
 	common->Printf( "Wrote %s\n", checkname.c_str() );
 }
+
+#ifdef __EMSCRIPTEN__
+static void R_WebScreenshotFailure(const char *message) {
+	common->Warning("%s", message);
+	EM_ASM({
+		if (Module.onScreenshotReady) Module.onScreenshotReady(null, UTF8ToString($0));
+	}, message);
+}
+
+// Run through the engine command queue, where ordinary screenshots render.
+// The temporary PNG is copied to JS before freeing the engine's read buffer.
+static void R_WebScreenshot_f(const idCmdArgs &args) {
+	if (!glConfig.isInitialized) {
+		R_WebScreenshotFailure("The renderer is not ready for a screenshot.");
+		return;
+	}
+	if (args.Argc() != 1 && args.Argc() != 3) {
+		R_WebScreenshotFailure("Usage: webscreenshot [width height]");
+		return;
+	}
+	int size[2] = {glConfig.vidWidth, glConfig.vidHeight};
+	for (int i = 0; i < 2; ++i) {
+		if (args.Argc() == 3) {
+			char *end;
+			long value = strtol(args.Argv(i + 1), &end, 10);
+			if (*end || value < 1 || value > 4096) {
+				R_WebScreenshotFailure("Screenshot dimensions must be integers from 1 to 4096.");
+				return;
+			}
+			size[i] = (int)value;
+		}
+		if (size[i] < 1 || size[i] > 4096) {
+			R_WebScreenshotFailure("Screenshot dimensions must be integers from 1 to 4096.");
+			return;
+		}
+	}
+	static unsigned int sequence = 0;
+	idStr filename = va("screenshots/.web-capture-%d-%u.png", Sys_Milliseconds(), ++sequence);
+	console->Close();
+	g_screenshotFormat = 2; // force PNG without changing the user's format cvar
+	tr.TakeScreenshot(size[0], size[1], filename.c_str(), 1, NULL);
+	void *buffer = NULL;
+	int length = fileSystem->ReadFile(filename.c_str(), &buffer);
+	if (length > 0 && buffer) {
+		EM_ASM({
+			if (Module.onScreenshotReady) Module.onScreenshotReady(HEAPU8.slice($0, $0 + $1));
+		}, buffer, length);
+	} else {
+		R_WebScreenshotFailure("Could not create the screenshot. Try again after the game finishes loading.");
+	}
+	if (buffer) fileSystem->FreeFile(buffer);
+	fileSystem->RemoveFile(filename.c_str());
+}
+#endif
 
 /*
 ===============
@@ -2272,6 +2364,9 @@ void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "listGuis", R_ListGuis_f, CMD_FL_RENDERER, "lists guis" );
 	cmdSystem->AddCommand( "touchGui", R_TouchGui_f, CMD_FL_RENDERER, "touches a gui" );
 	cmdSystem->AddCommand( "screenshot", R_ScreenShot_f, CMD_FL_RENDERER, "takes a screenshot" );
+#ifdef __EMSCRIPTEN__
+	cmdSystem->AddCommand("webscreenshot", R_WebScreenshot_f, CMD_FL_RENDERER, "downloads a PNG screenshot [width height]");
+#endif
 	cmdSystem->AddCommand( "envshot", R_EnvShot_f, CMD_FL_RENDERER, "takes an environment shot" );
 	cmdSystem->AddCommand( "makeAmbientMap", R_MakeAmbientMap_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "makes an ambient map" );
 	cmdSystem->AddCommand( "benchmark", R_Benchmark_f, CMD_FL_RENDERER, "benchmark" );

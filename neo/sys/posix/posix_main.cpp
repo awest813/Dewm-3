@@ -419,7 +419,7 @@ int Sys_GetDriveFreeSpace( const char *path ) {
 static const int   crashSigs[]     = {  SIGILL,   SIGABRT,   SIGFPE,   SIGSEGV };
 static const char* crashSigNames[] = { "SIGILL", "SIGABRT", "SIGFPE", "SIGSEGV" };
 
-#if ( defined(__linux__) && defined(__GLIBC__) ) || defined(__FreeBSD__) || (defined(__APPLE__) && !defined(OSX_TIGER))
+#if ( ( defined(__linux__) && defined(__GLIBC__) ) || defined(__FreeBSD__) || (defined(__APPLE__) && !defined(OSX_TIGER)) ) && !defined(__EMSCRIPTEN__)
   #define D3_HAVE_BACKTRACE
   #include <execinfo.h>
 #endif
@@ -858,6 +858,9 @@ Return NULL if a complete line is not ready.
 ================
 */
 char *Sys_ConsoleInput( void ) {
+#ifdef __EMSCRIPTEN__
+	return NULL; // input comes from SDL/the page, never a POSIX terminal
+#endif
 	if ( tty_enabled ) {
 		int	key;
 		bool	hidden = false;

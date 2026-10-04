@@ -40,6 +40,17 @@ idCVar idVertexCache::r_vertexBufferMegs( "r_vertexBufferMegs", "32", CVAR_INTEG
 
 idVertexCache		vertexCache;
 
+#ifdef __EMSCRIPTEN__
+static idCVar r_webBufferReuse("r_webBufferReuse", "1", CVAR_RENDERER | CVAR_BOOL,
+	"reuse free WebGL buffers with matching vertex/index classification");
+static vertCache_t * Web_FindCompatibleHeader( vertCache_t *head, bool indexBuffer ) {
+	for (vertCache_t *block = head->next; block != head; block = block->next) {
+		if (block->indexBuffer == indexBuffer) return block;
+	}
+	return head->next;
+}
+#endif
+
 /*
 ==============
 R_ListVertexCache_f
@@ -239,6 +250,9 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 
 		for ( int i = 0; i < EXPAND_HEADERS; i++ ) {
 			block = headerAllocator.Alloc();
+#ifdef __EMSCRIPTEN__
+			block->indexBuffer = false;
+#endif
 			block->next = freeStaticHeaders.next;
 			block->prev = &freeStaticHeaders;
 			block->next->prev = block;
@@ -252,6 +266,11 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 
 	// move it from the freeStaticHeaders list to the staticHeaders list
 	block = freeStaticHeaders.next;
+#ifdef __EMSCRIPTEN__
+	// Reusing the first free header can alternate its WebGL classification
+	// every frame and force GPU object deletion/recreation. Prefer a match.
+	if (r_webBufferReuse.GetBool()) block = Web_FindCompatibleHeader(&freeStaticHeaders, indexBuffer);
+#endif
 	block->next->prev = block->prev;
 	block->prev->next = block->next;
 	block->next = staticHeaders.next;
@@ -278,6 +297,15 @@ void idVertexCache::Alloc( void *data, int size, vertCache_t **buffer, bool inde
 	// referenced by the GPU yet, and can be purged if needed.
 	block->frameUsed = currentFrame - NUM_VERTEX_FRAMES;
 
+#ifdef __EMSCRIPTEN__
+	// WebGL permanently classifies a buffer on its first bind. Recycled
+	// desktop cache headers may switch between vertex and index data;
+	// those switches need a fresh GPU object in the browser.
+	if ( block->vbo && block->indexBuffer != indexBuffer ) {
+		qglDeleteBuffersARB( 1, &block->vbo );
+		qglGenBuffersARB( 1, &block->vbo );
+	}
+#endif
 	block->indexBuffer = indexBuffer;
 
 	// copy the data

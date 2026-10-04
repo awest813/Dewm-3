@@ -1,0 +1,18 @@
+name: Launcher regression tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  shell:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - run: node tests/test_web_shell.js
+      - run: for script in scripts/*.sh; do bash -n "$script"; done
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - run: ./tests/windows-launchers.ps1
+      - run: ./scripts/windows-setup.ps1 -Generator 'Visual Studio 17 2022'

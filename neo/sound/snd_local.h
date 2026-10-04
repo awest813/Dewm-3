@@ -54,6 +54,10 @@ If you have questions concerning this license or the applicable additional terms
 	#include <AL/alext.h>
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include "sound/openal_web_compat.h"
+#endif
+
 // DG: make this code build with older OpenAL headers that don't know about ALC_SOFT_HRTF
 //     which provides LPALCRESETDEVICESOFT for idSoundSystemLocal::alcResetDeviceSOFT()
 #ifndef ALC_SOFT_HRTF

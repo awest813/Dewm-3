@@ -27,6 +27,9 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include <SDL.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "sys/platform.h"
 #include "framework/Licensee.h"
@@ -263,7 +266,15 @@ bool GLimp_Init(glimpParms_t parms) {
 
 try_again:
 
-		SDL_GL_SetAttribute(SDL_GL_RED_SIZE, channelcolorbits);
+#ifdef __EMSCRIPTEN__
+	// WebGL2 == OpenGL ES 3.0. Request an ES context explicitly: without
+	// these attributes Emscripten/SDL may hand out a WebGL1 (GLES2) context,
+	// which lacks the core entry points in renderer/qgl_gles.h.
+	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 3 );
+	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 0 );
+	SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES );
+#endif
+	SDL_GL_SetAttribute(SDL_GL_RED_SIZE, channelcolorbits);
 		SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, channelcolorbits);
 		SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, channelcolorbits);
 		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -888,6 +899,17 @@ GLExtension_t GLimp_ExtensionPointer(const char *name) {
 	return (GLExtension_t)SDL_GL_GetProcAddress(name);
 }
 
+#ifdef __EMSCRIPTEN__
+static bool webMouseCaptured = false;
+static int webCaptureWanted = -1;
+bool GLimp_WebMouseCaptured() {
+	return webMouseCaptured;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_SetMouseCaptured(int captured) {
+	webMouseCaptured = captured != 0;
+}
+#endif
+
 void GLimp_GrabInput(int flags) {
 	if (!window) {
 		common->Warning("GLimp_GrabInput called without window");
@@ -895,7 +917,18 @@ void GLimp_GrabInput(int flags) {
 	}
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)
+#ifdef __EMSCRIPTEN__
+	int captureWanted = (flags & GRAB_RELATIVEMOUSE) != 0;
+	if (webCaptureWanted != captureWanted) {
+		webCaptureWanted = captureWanted;
+		EM_ASM({ if (Module['onMouseModeChange']) Module['onMouseModeChange'](!!$0); }, captureWanted);
+	}
+	// A rejected browser request must not leave an invisible free cursor.
+	bool hideCursor = (flags & GRAB_HIDECURSOR) && (!captureWanted || webMouseCaptured);
+	SDL_ShowCursor(hideCursor ? SDL_DISABLE : SDL_ENABLE);
+#else
 	SDL_ShowCursor( (flags & GRAB_HIDECURSOR) ? SDL_DISABLE : SDL_ENABLE );
+#endif
 	SDL_SetRelativeMouseMode( (flags & GRAB_RELATIVEMOUSE) ? SDL_TRUE : SDL_FALSE );
 	SDL_SetWindowGrab( window, (flags & GRAB_GRABMOUSE) ? SDL_TRUE : SDL_FALSE );
 #else
