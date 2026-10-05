@@ -34,6 +34,13 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "Script_Thread.h"
 
+static idCVar g_debugScriptThread( "g_debugScriptThread", "", CVAR_GAME | CVAR_CHEAT,
+	"script thread name for read-only execution and wait tracing; empty disables" );
+
+static bool TraceScriptThread( const char *name ) {
+	return g_debugScriptThread.GetString()[0] && idStr::Cmp( g_debugScriptThread.GetString(), name ) == 0;
+}
+
 const idEventDef EV_Thread_Execute( "<execute>", NULL );
 const idEventDef EV_Thread_SetCallback( "<script_setcallback>", NULL );
 
@@ -660,6 +667,10 @@ bool idThread::Execute( void ) {
 	lastExecuteTime = gameLocal.time;
 	ClearWaitFor();
 	done = interpreter.Execute();
+	if ( TraceScriptThread( threadName.c_str() ) ) {
+		gameLocal.Printf( "THREAD_EXECUTE name=%s frame=%d time=%d done=%d waitingUntil=%d manual=%d seed=%d\n",
+			threadName.c_str(), gameLocal.framenum, gameLocal.time, done, waitingUntil, manualControl, gameLocal.random.GetSeed() );
+	}
 	if ( done ) {
 		End();
 		if ( interpreter.terminateOnExit ) {
@@ -896,6 +907,10 @@ idThread::WaitSec
 ================
 */
 void idThread::WaitSec( float time ) {
+	if ( TraceScriptThread( threadName.c_str() ) ) {
+		gameLocal.Printf( "THREAD_WAIT name=%s frame=%d time=%d seconds=%.9g milliseconds=%d\n",
+			threadName.c_str(), gameLocal.framenum, gameLocal.time, time, SEC2MS( time ) );
+	}
 	WaitMS( SEC2MS( time ) );
 }
 

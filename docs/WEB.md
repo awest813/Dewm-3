@@ -1243,6 +1243,98 @@ Evidence is in ignored `build-windows/entity148-native/full-console.txt`,
 `build-web/entity148-console.txt`. The explosive fixture now records clock and
 seed state after every checkpoint and freezes at the end for comparison.
 
+### Rotational collision precision correction (2026-10-05)
+
+Optional `af_debugEntity`/`af_debugEndFrame` capture articulated-body origin,
+velocity and orientation. `af_debugRotationEntity`/`af_debugRotationFrame`
+capture selected-frame integration rotation inputs and matrices. Entity selectors
+default to -1, disabling the read-only diagnostics.
+
+The torso begins with identical state and matches native for nine frames. The
+first recorded difference is in body 1's post-collision orientation at frame 10.
+Integration rotation inputs and matrices match; isolated native/web matrix
+multiplication, normalization and inverse-square-root seed tables also match.
+By frame 148, browser collision speed is 94.3485413, versus native 7.15470839.
+Only the browser crosses the 80-unit bounce-sound threshold, drawing a sound
+diversity value from the shared game random generator. Evidence: ignored
+`build-windows/af-state-native/full-console.txt`,
+`build-windows/af-rotation-native/full-console.txt`,
+`build-web/af-state-console.txt`, `build-web/af-first10-console.txt` and
+`build-web/af-rotation-console.txt`.
+
+Rotational collision handling now explicitly passes doubles to its initial
+`tan` and both collision-fraction `atan` calls, preserving the native rounding
+through fraction scaling and division. `tests/web_collision_fraction_check.py`
+extracts all three actual formulas and checks 66 synthetic cases against
+original MSVC measurements in `tests/collision_fraction_native.txt`.
+Native and optimized web pass exactly; original web arithmetic fails (for
+example, fraction 0.75 instead of native 0.74999994). Native results are
+unchanged with the correction. CI runs the asset-free check.
+
+Both full engine builds pass. The corrected browser matches all 241 early
+articulated-body records and 64 random trace records, eliminating the extra
+frame-148 sound draw. Evidence: ignored `build-web/af-collision-fixed-console.txt`.
+Native control runs preserve all 22 original clock/frame/seed checkpoints and
+weapon/projectile comparisons. All 44 Python regressions pass.
+
+The complete explosive replay still fails: another seed mismatch appears
+between frame 171 and frame 471, and rocket launch origin differs by 0.08931
+units. All 22 player/weapon/ammo/health/timing checkpoints pass, which does not
+prove projectile or full scene fidelity. Evidence: ignored
+`build-windows/collision-fixed-native/full-console.txt` and
+`build-web/collision-fixed-explosive-console.txt`. No random draws are forced or
+skipped, and comparison tolerances remain unchanged.
+
+A bounded follow-up identifies the next seed difference precisely: frame 214
+matches through `think_complete`, then native queued events consume one draw
+that web does not. The responsible event and scheduling difference remain
+unresolved. Evidence: ignored
+`build-windows/collision-next-seed-native/full-console.txt` and
+`build-web/collision-next-seed-console.txt`. This is the next fidelity target.
+
+### Speaker script and browser sound-clock audit (2026-10-05)
+
+Optional `g_debugEventStartFrame`/`g_debugEventEndFrame` trace queued event
+identity, due time and seeds before/after callbacks. Both default to -1.
+`g_debugScriptThread` selects a named script thread for execution/wait tracing
+and defaults to empty. These diagnostics never schedule events or draw random
+values. Event traces read object identity before callbacks, since callbacks can
+delete their objects.
+
+The frame-214 native draw comes from
+`map_marscity2::video_request_speaker`. Its stock script plays a sound, waits
+for the returned duration, then waits one second. Native reports 2.39500022
+seconds (2395 ms) at frame 1, queues a callback due at 2411 ms, waits one second
+at frame 151 and plays again at frame 214. Web instead reports zero seconds at
+frame 1 and leaves `waitingUntil` equal to the current time (16 ms), so no later
+callback is queued. Both report the same 52819 samples for the speaker sound.
+Evidence: ignored `build-windows/event214-native/full-console.txt`,
+`build-windows/event-wide-native/full-console.txt`,
+`build-windows/thread-wait-native/full-console.txt` and corresponding
+`build-web/{event214,event-wide,thread-wait}-console.txt` logs.
+
+Existing `s_showStartSound` diagnostics identify the zero result as duplicate
+suppression: the browser's spawn sound and subsequent script sound share a
+stale cached audio timestamp during synchronous map initialization. Evidence:
+ignored `build-web/sound-start-console.txt`. The single-thread Emscripten sound
+query now calculates the current wall-clock sample timestamp using the same
+double conversion, eight-sample alignment and overflow mask as
+`AsyncUpdateWrite`, without mixing audio recursively. Native and browser
+pthread builds retain their existing async clock query. Both full builds pass.
+The corrected browser matches every recorded speaker wait and execution state,
+including frames 1, 151, 214, 364 and 427, and all six recorded clock/frame/seed
+checkpoints through frame 471. Evidence: ignored
+`build-web/sound-clock-fixed-console.txt`, compared with
+`build-windows/thread-wait-native/full-console.txt`. All 44 Python regressions
+and six browser shell groups pass. The complete explosive replay now passes all
+22 player/weapon/ammo/health, projectile, and game/render clock/frame/seed
+checkpoints with the existing 0.001-unit comparison tolerance. Evidence: ignored
+`build-web/sound-clock-full-console.txt`, compared with
+`build-windows/collision-fixed-native/full-console.txt`. This supersedes the
+rocket and frame-214 failures recorded above. These fixtures do not establish
+full campaign fidelity, BFG targeting, melee hit/death behavior, or sustained
+60 FPS; those still require separate verification.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,

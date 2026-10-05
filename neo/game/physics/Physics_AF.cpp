@@ -37,6 +37,11 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "physics/Physics_AF.h"
 
+static idCVar af_debugRotationEntity( "af_debugRotationEntity", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"entity number for selected-frame articulated-body rotation tracing; -1 disables" );
+static idCVar af_debugRotationFrame( "af_debugRotationFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"simulation frame for articulated-body rotation tracing" );
+
 CLASS_DECLARATION( idPhysics_Base, idPhysics_AF )
 END_CLASS
 
@@ -5386,6 +5391,17 @@ void idPhysics_AF::Evolve( float timeStep ) {
 		angle = -timeStep * (float) RAD2DEG( vec.Normalize() );
 		rotation = idRotation( vec3_origin, vec, angle );
 		rotation.Normalize180();
+		const bool traceRotation = af_debugRotationEntity.GetInteger() == self->entityNumber &&
+			gameLocal.framenum == af_debugRotationFrame.GetInteger();
+		if ( traceRotation ) {
+			gameLocal.Printf( "AF_ROTATION entity=%d frame=%d body=%d angle=%.9g axis=(%.9g %.9g %.9g)\n",
+				self->entityNumber, gameLocal.framenum, i, rotation.GetAngle(), vec.x, vec.y, vec.z );
+			const idMat3 &rotationAxis = rotation.ToMat3();
+			for ( int row = 0; row < 3; row++ ) {
+				gameLocal.Printf( "AF_ROTATION_MATRIX entity=%d frame=%d body=%d row=%d value=(%.9g %.9g %.9g)\n",
+					self->entityNumber, gameLocal.framenum, i, row, rotationAxis[row].x, rotationAxis[row].y, rotationAxis[row].z );
+			}
+		}
 
 		// rotate world axis
 		body->next->worldAxis = body->current->worldAxis * rotation.ToMat3();

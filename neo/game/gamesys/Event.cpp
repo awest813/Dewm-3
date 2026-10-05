@@ -28,10 +28,16 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/platform.h"
 #include "script/Script_Program.h"
+#include "script/Script_Thread.h"
 #include "Entity.h"
 #include "Game_local.h"
 
 #include "Event.h"
+
+static idCVar g_debugEventStartFrame( "g_debugEventStartFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"first simulation frame for queued event tracing; -1 disables" );
+static idCVar g_debugEventEndFrame( "g_debugEventEndFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"last simulation frame for queued event tracing" );
 
 /*
 sys_event.cpp
@@ -466,6 +472,9 @@ void idEvent::ServiceEvents( void ) {
 	const idEventDef *ev;
 	byte		*data;
 	const char  *materialName;
+	const bool traceEvents = g_debugEventStartFrame.GetInteger() >= 0 &&
+		gameLocal.framenum >= g_debugEventStartFrame.GetInteger() &&
+		gameLocal.framenum <= g_debugEventEndFrame.GetInteger();
 
 	num = 0;
 	while( !EventQueue.IsListEmpty() ) {
@@ -526,7 +535,19 @@ void idEvent::ServiceEvents( void ) {
 		// is deleted, the event won't be freed twice
 		event->eventNode.Remove();
 		assert( event->object );
+		if ( traceEvents ) {
+			const idEntity *entity = event->object->IsType( idEntity::Type ) ? static_cast<const idEntity *>( event->object ) : NULL;
+			idThread *thread = event->object->IsType( idThread::Type ) ? static_cast<idThread *>( event->object ) : NULL;
+			gameLocal.Printf( "EVENT_TRACE phase=begin frame=%d order=%d due=%d time=%d event=%s type=%s entity=%d name=%s seed=%d\n",
+				gameLocal.framenum, num, event->time, gameLocal.time, ev->GetName(), event->object->GetClassname(),
+				entity ? entity->entityNumber : -1, entity ? entity->name.c_str() : thread ? thread->GetThreadName() : "-", gameLocal.random.GetSeed() );
+		}
 		event->object->ProcessEventArgPtr( ev, args );
+		if ( traceEvents ) {
+			// The callback may delete its object; read only the global seed here.
+			gameLocal.Printf( "EVENT_TRACE phase=end frame=%d order=%d seed=%d\n",
+				gameLocal.framenum, num, gameLocal.random.GetSeed() );
+		}
 
 		// return the event to the free list
 		event->Free();

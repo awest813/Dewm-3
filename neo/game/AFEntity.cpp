@@ -37,6 +37,35 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "AFEntity.h"
 
+// Read-only diagnostics for native/web articulated-body comparisons.
+static idCVar af_debugEntity( "af_debugEntity", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"entity number for articulated-body state tracing; -1 disables" );
+static idCVar af_debugEndFrame( "af_debugEndFrame", "0", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"last simulation frame for articulated-body state tracing" );
+
+static bool TraceAFEnabled( int entityNumber ) {
+	return af_debugEntity.GetInteger() == entityNumber && gameLocal.framenum <= af_debugEndFrame.GetInteger();
+}
+
+static void TraceAFState( int entityNumber, const char *phase, const idPhysics_AF *physics ) {
+	if ( !TraceAFEnabled( entityNumber ) ) {
+		return;
+	}
+	for ( int i = 0; i < physics->GetNumBodies(); i++ ) {
+		const idVec3 &origin = physics->GetOrigin( i );
+		const idVec3 &linear = physics->GetLinearVelocity( i );
+		const idVec3 &angular = physics->GetAngularVelocity( i );
+		gameLocal.Printf( "AF_TRACE phase=%s entity=%d frame=%d body=%d origin=(%.9g %.9g %.9g) linear=(%.9g %.9g %.9g) angular=(%.9g %.9g %.9g)\n",
+			phase, entityNumber, gameLocal.framenum, i, origin.x, origin.y, origin.z,
+			linear.x, linear.y, linear.z, angular.x, angular.y, angular.z );
+		const idMat3 &axis = physics->GetAxis( i );
+		for ( int row = 0; row < 3; row++ ) {
+			gameLocal.Printf( "AF_AXIS phase=%s entity=%d frame=%d body=%d row=%d value=(%.9g %.9g %.9g)\n",
+				phase, entityNumber, gameLocal.framenum, i, row, axis[row].x, axis[row].y, axis[row].z );
+		}
+	}
+}
+
 /*
 ===============================================================================
 
@@ -628,7 +657,9 @@ idAFEntity_Base::Think
 ================
 */
 void idAFEntity_Base::Think( void ) {
+	TraceAFState( entityNumber, "begin", af.GetPhysics() );
 	RunPhysics();
+	TraceAFState( entityNumber, "end", af.GetPhysics() );
 	UpdateAnimation();
 	if ( thinkFlags & TH_UPDATEVISUALS ) {
 		Present();
@@ -756,6 +787,13 @@ bool idAFEntity_Base::Collide( const trace_t &collision, const idVec3 &velocity 
 
 	if ( af.IsActive() ) {
 		v = -( velocity * collision.c.normal );
+		if ( TraceAFEnabled( entityNumber ) ) {
+			gameLocal.Printf( "AF_COLLISION entity=%d frame=%d speed=%.9g nextSoundTime=%d time=%d point=(%.9g %.9g %.9g) normal=(%.9g %.9g %.9g) velocity=(%.9g %.9g %.9g)\n",
+				entityNumber, gameLocal.framenum, v, nextSoundTime, gameLocal.time,
+				collision.c.point.x, collision.c.point.y, collision.c.point.z,
+				collision.c.normal.x, collision.c.normal.y, collision.c.normal.z,
+				velocity.x, velocity.y, velocity.z );
+		}
 		if ( v > BOUNCE_SOUND_MIN_VELOCITY && gameLocal.time > nextSoundTime ) {
 			f = v > BOUNCE_SOUND_MAX_VELOCITY ? 1.0f : idMath::Sqrt( v - BOUNCE_SOUND_MIN_VELOCITY ) * ( 1.0f / idMath::Sqrt( BOUNCE_SOUND_MAX_VELOCITY - BOUNCE_SOUND_MIN_VELOCITY ) );
 			if ( StartSound( "snd_bounce", SND_CHANNEL_ANY, 0, false, NULL ) ) {

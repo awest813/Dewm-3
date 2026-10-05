@@ -774,7 +774,18 @@ idSoundSystemLocal::GetCurrent44kHzTime
 */
 int idSoundSystemLocal::GetCurrent44kHzTime( void ) const {
 	if ( isInitialized ) {
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+		// Map loading and script replay block the browser's async sound update.
+		// A cached timestamp can then reject a later script sound as a duplicate,
+		// returning zero duration and leaving its waiting thread unscheduled.
+		// Use the same clock conversion as AsyncUpdateWrite without mixing audio
+		// recursively; the normal browser update still submits channel changes.
+		long long int sampleTime64 = double( Sys_Milliseconds() ) * 44.1;
+		sampleTime64 = ( sampleTime64 + 4 ) & ~(long long int)7;
+		return sampleTime64 & INT_MAX;
+#else
 		return CurrentSoundTime;
+#endif
 	} else {
 		// NOTE: this would overflow 31bits within about 1h20
 		//return ( ( Sys_Milliseconds()*441 ) / 10 ) * 4;

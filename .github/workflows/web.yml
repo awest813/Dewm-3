@@ -28,6 +28,8 @@ on:
       - 'tests/test_rigid_body_trace.py'
       - 'tests/web_trace_shape_check.py'
       - 'tests/trace_shape_native.txt'
+      - 'tests/web_collision_fraction_check.py'
+      - 'tests/collision_fraction_native.txt'
       - 'tests/web_gameplay_check.py'
       - 'tests/web_menu_check.py'
       - 'tests/gameplay_parity*'
@@ -59,6 +61,8 @@ on:
       - 'tests/test_rigid_body_trace.py'
       - 'tests/web_trace_shape_check.py'
       - 'tests/trace_shape_native.txt'
+      - 'tests/web_collision_fraction_check.py'
+      - 'tests/collision_fraction_native.txt'
       - 'tests/web_gameplay_check.py'
       - 'tests/web_menu_check.py'
       - 'tests/gameplay_parity*'
@@ -147,6 +151,9 @@ jobs:
           python3 tests/web_trace_shape_check.py build-web/trace-shape-check.cpp
           em++ build-web/trace-shape-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/trace-shape-check.js
           node build-web/trace-shape-check.js
+          python3 tests/web_collision_fraction_check.py build-web/collision-fraction-check.cpp
+          em++ build-web/collision-fraction-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/collision-fraction-check.js
+          node build-web/collision-fraction-check.js
           python3 tests/web_mouse_check.py build-web/web-mouse-check.cpp
           em++ build-web/web-mouse-check.cpp -sENVIRONMENT=node -o build-web/web-mouse-check.js
           node build-web/web-mouse-check.js

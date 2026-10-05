@@ -1287,7 +1287,9 @@ void idCollisionModelManagerLocal::Rotation180( trace_t *results, const idVec3 &
 	tw.angle = endAngle - startAngle;
 	assert( tw.angle > -180.0f && tw.angle < 180.0f );
 	tw.angle = idMath::ClampFloat(-180.0f, 180.0f, tw.angle); // DG: enforce it for the rare cases the assert would trigger
-	tw.maxTan = initialTan = idMath::Fabs( tan( ( idMath::PI / 360.0f ) * tw.angle ) );
+	// Keep native double transcendental arithmetic through the collision
+	// fraction calculation; early float rounding changes impact orientation.
+	tw.maxTan = initialTan = idMath::Fabs( tan( static_cast<double>( ( idMath::PI / 360.0f ) * tw.angle ) ) );
 	tw.model = idCollisionModelManagerLocal::models[model];
 	tw.start = start - modelOrigin;
 	// rotation axis, axis is assumed to be normalized
@@ -1377,7 +1379,7 @@ void idCollisionModelManagerLocal::Rotation180( trace_t *results, const idVec3 &
 		if ( tw.maxTan == initialTan ) {
 			results->fraction = 1.0f;
 		} else {
-			results->fraction = idMath::Fabs( atan( tw.maxTan ) * ( 2.0f * 180.0f / idMath::PI ) / tw.angle );
+			results->fraction = idMath::Fabs( atan( static_cast<double>( tw.maxTan ) ) * ( 2.0f * 180.0f / idMath::PI ) / tw.angle );
 		}
 		assert( results->fraction <= 1.0f );
 		endRotation.Set( rorg, axis, startAngle + (endAngle-startAngle) * results->fraction );
@@ -1587,7 +1589,7 @@ void idCollisionModelManagerLocal::Rotation180( trace_t *results, const idVec3 &
 	if ( tw.maxTan == initialTan ) {
 		results->fraction = 1.0f;
 	} else {
-		results->fraction = idMath::Fabs( atan( tw.maxTan ) * ( 2.0f * 180.0f / idMath::PI ) / tw.angle );
+		results->fraction = idMath::Fabs( atan( static_cast<double>( tw.maxTan ) ) * ( 2.0f * 180.0f / idMath::PI ) / tw.angle );
 	}
 	assert( results->fraction <= 1.0f );
 	endRotation.Set( rorg, axis, startAngle + (endAngle-startAngle) * results->fraction );
