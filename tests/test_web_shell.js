@@ -472,6 +472,8 @@ async function checkFolderRecovery() {
   console.log('Web launcher folder recovery regressions passed.');
 }
 async function checkScreenshotCopy() {
+  let copyFeedback;
+  context.setTimeout = (handler, delay) => { assert.equal(delay, 5000); copyFeedback = handler; return 1; };
   assert.equal(elements.get('screenshot-copy').hidden, true, 'unsupported image copy is hidden');
   const writes = [];
   context.ClipboardItem = class { constructor(data) { this.data = data; } };
@@ -493,12 +495,21 @@ async function checkScreenshotCopy() {
   context.navigator.clipboard.write = () => new Promise(resolve => { finish = resolve; });
   const pending = elementListeners.get('screenshot-copy:click')();
   assert.equal(elements.get('screenshot-copy').disabled, true);
+  assert.match(elements.get('screenshot-status').textContent, /Copying screenshot/);
+  copyFeedback();
+  assert.match(elements.get('screenshot-status').textContent, /still waiting for the browser/);
+  assert.equal(elements.get('screenshot-copy').disabled, true, 'waiting feedback cannot overlap clipboard writes');
   context.Module.onScreenshotReady(new Uint8Array([137,80,78,71,2]));
   assert.equal(elements.get('screenshot-copy').disabled, true, 'replacement cannot overlap a pending copy');
+  assert.match(elements.get('screenshot-status').textContent, /earlier image copy is still waiting/, 'replacement explains why Copy remains disabled');
+  copyFeedback();
+  assert.match(elements.get('screenshot-status').textContent, /Screenshot ready/, 'old waiting timer does not overwrite a replacement capture');
   finish();
   await pending;
   assert.match(elements.get('screenshot-status').textContent, /Screenshot ready/, 'old copy completion does not overwrite new capture status');
   assert.equal(elements.get('screenshot-copy').disabled, false);
+  copyFeedback();
+  assert.match(elements.get('screenshot-status').textContent, /Screenshot ready/, 'settled copy cannot display stale waiting feedback');
   context.ClipboardItem.supports = () => false;
   context.Module.onScreenshotReady(new Uint8Array([137,80,78,71]));
   assert.equal(elements.get('screenshot-copy').hidden, true, 'browsers without PNG clipboard support keep preview and download');

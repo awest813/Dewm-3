@@ -337,6 +337,11 @@
     var image = lastScreenshotBlob;
     screenshotCopyPending = true;
     button.disabled = true;
+    document.getElementById('screenshot-status').textContent = 'Copying screenshot…';
+    var copyFeedbackTimer = setTimeout(function () {
+      if (screenshotCopyPending && image === lastScreenshotBlob)
+        document.getElementById('screenshot-status').textContent = 'Copy is still waiting for the browser. Check for a clipboard prompt, or try Download PNG.';
+    }, 5000);
     try {
       await navigator.clipboard.write([new ClipboardItem({'image/png': image})]);
       if (image === lastScreenshotBlob)
@@ -345,6 +350,7 @@
       if (image === lastScreenshotBlob)
         document.getElementById('screenshot-status').textContent = 'Copy was unavailable. Choose Download PNG to save the image.';
     } finally {
+      clearTimeout(copyFeedbackTimer);
       screenshotCopyPending = false;
       button.disabled = !lastScreenshotBlob;
     }
@@ -374,7 +380,9 @@
       copyButton.disabled = screenshotCopyPending;
       if (screenshotURL) URL.revokeObjectURL(screenshotURL);
       screenshotURL = url;
-      status.textContent = 'Screenshot ready. View it below or choose Download PNG to save it.';
+      status.textContent = screenshotCopyPending ?
+        'Screenshot ready. An earlier image copy is still waiting for the browser. Try Download PNG.' :
+        'Screenshot ready. View it below or choose Download PNG to save it.';
     } catch (downloadError) {
       status.textContent = 'Could not download the screenshot. Try again.';
       log('Screenshot download: ' + downloadError, true);

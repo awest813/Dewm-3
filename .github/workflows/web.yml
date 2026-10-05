@@ -25,6 +25,9 @@ on:
       - 'tests/melee_hit_parity.cfg'
       - 'tests/bfg_damage_parity.cfg'
       - 'tests/bfg_beam_parity.cfg'
+      - 'tests/player_death_parity.cfg'
+      - 'tests/render_hangar_parity.cfg'
+      - 'tests/test_player_death_parity.py'
       - 'tests/entity_parity_check.py'
       - 'tests/test_entity_parity.py'
       - 'tests/projectile_parity_check.py'
@@ -63,6 +66,9 @@ on:
       - 'tests/melee_hit_parity.cfg'
       - 'tests/bfg_damage_parity.cfg'
       - 'tests/bfg_beam_parity.cfg'
+      - 'tests/player_death_parity.cfg'
+      - 'tests/render_hangar_parity.cfg'
+      - 'tests/test_player_death_parity.py'
       - 'tests/entity_parity_check.py'
       - 'tests/test_entity_parity.py'
       - 'tests/projectile_parity_check.py'
@@ -108,6 +114,9 @@ jobs:
           grep -q 'IDBFS' web/shell.html
           grep -q 'fs_basepath' web/shell.html
           grep -q 'WEB_PRELOAD_DIR' neo/CMakeLists.txt
+
+      - name: Check player death verifier
+        run: python3 -m unittest discover -s tests -p test_player_death_parity.py
 
       - name: Check target snapshot verifier
         run: python3 -m unittest discover -s tests -p test_entity_parity.py

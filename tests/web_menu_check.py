@@ -105,6 +105,13 @@ harness += function('neo/framework/Common.cpp', 'Com_ExecMachineSpec_f')
 harness += '\nvoid menuCommand(const idCmdArgs &args){int icmd=0;while(icmd<args.Argc()){idStr cmd=args.Argv(icmd++);' + branches + '}}\n'
 harness += r'''
 int main(){
+ check(Web_IsKeyboardMenu("guis/restart.gui")&&Web_IsKeyboardMenu("GUIS/RESTART.GUI"),"death menu has keyboard policy");
+ check(Web_IsKeyboardMenu("guis/mainmenu.gui")&&Web_IsKeyboardMenu("guis/demo_mainmenu.gui"),"main menus retain keyboard policy");
+ check(!Web_IsKeyboardMenu(nullptr)&&!Web_IsKeyboardMenu("guis/modmenu.gui"),"unknown keyboard menus left alone");
+ check(Web_IsKeyboardModal("guis/restart.gui","LoadGame")&&Web_IsKeyboardModal("GUIS/RESTART.GUI","loadgame"),"death Load panel owns keyboard focus");
+ check(!Web_IsKeyboardModal(nullptr,"LoadGame")&&!Web_IsKeyboardModal("guis/restart.gui",nullptr),"missing modal source guarded");
+ check(!Web_IsKeyboardModal("guis/mainmenu.gui","LoadGame")&&!Web_IsKeyboardModal("guis/modmenu.gui","LoadGame")&&!Web_IsKeyboardModal("guis/restart.gui","Restart"),"modal patch limited to stock death Load panel");
+ for(const auto&o:webMenuChoices)check(!Web_MenuChoice("guis/restart.gui",o.window,o.originalCvar),"death menu does not gain graphics overrides");
  for(const auto&o:webMenuChoices){check(Web_MenuChoice("guis/mainmenu.gui",o.window,o.originalCvar)==&o,"stock policy match");check(!Web_MenuChoice("guis/modmenu.gui",o.window,o.originalCvar),"mod left alone");check(!Web_MenuChoice("guis/mainmenu.gui",o.window,"custom_binding"),"custom binding left alone");}
  check(!Web_MenuChoice(nullptr,"OS2Primary","r_mode"),"missing source guarded");
  check(!Web_MenuChoice("guis/mainmenu.gui",nullptr,"r_mode"),"missing control guarded");

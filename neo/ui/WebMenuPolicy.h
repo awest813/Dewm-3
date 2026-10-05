@@ -29,6 +29,15 @@ static inline bool Web_IsStockMenu(const char *source) {
 		!idStr::Icmp(source, "guis/demo_mainmenu.gui"));
 }
 
+static inline bool Web_IsKeyboardMenu(const char *source) {
+	return Web_IsStockMenu(source) || (source && !idStr::Icmp(source, "guis/restart.gui"));
+}
+
+static inline bool Web_IsKeyboardModal(const char *source, const char *window) {
+	return source && window && !idStr::Icmp(source, "guis/restart.gui") &&
+		!idStr::Icmp(window, "LoadGame");
+}
+
 static inline const webMenuChoice_t *Web_MenuChoice(const char *source, const char *window, const char *cvar) {
 	if (!Web_IsStockMenu(source) || !window || !cvar) return NULL;
 	for (const webMenuChoice_t &option : webMenuChoices) {

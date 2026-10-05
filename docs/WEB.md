@@ -1470,6 +1470,164 @@ the test setting. The launcher presents its existing right-button fallback.
 Evidence: ignored `build-web/beam-restored-console.txt` and
 `C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/beam-audit-restored.jpg`.
 
+### Live mouse recovery and frame pacing audit (2026-10-05)
+
+The rebuilt launcher was tested with all nine original Steam game archives and
+the user's existing QuickSave at the Mars City security checkpoint. Readback
+confirmed `in_nograb 0`, `com_fixedTic 0`, `g_stopTime 0`, the 60 FPS cap,
+an 820 x 615 framebuffer, and a running WebAudio context with 16 playing sources.
+No save was overwritten.
+
+A `webperf 600` sample with a fixed camera and browser size averaged **59.4 FPS**.
+Mean CPU work was 4.21 ms per frame, with a 6.15 ms p95: 0.57 ms input/audio,
+3.64 ms game/render and 2.64 ms draw. The renderer averaged 410.9 draws and zero
+new GPU buffers per frame. No browser automation ran during the sample. Evidence:
+ignored `build-web/mouse-recovery-performance-console.txt`.
+This establishes near-60 FPS for this stationary scene only; moving views,
+combat, heavier scenes, GPU frame time and campaign-wide sustained performance
+remain unverified. The selected cap alone is not a performance result.
+
+Focus game still encounters the in-app browser's root-document pointer-lock
+rejection. The launcher now displays **Try another browser** for that specific
+error, while keeping right-button drag-to-look available. Its game-address field
+and **Copy game link** button were checked live: the visible status reported
+“Link copied. Paste it into your browser.” The help explains that another browser
+requires choosing the game archives again and has separate saves. It does not
+promise that changing browsers will enable capture. Successful physical pointer
+capture remains unverified.
+
+Seven browser regression groups cover this recovery, including unavailable and
+rejected clipboard access, duplicate-copy prevention, and hiding the help after
+successful capture or when the game releases the mouse. All 54 Python tests pass;
+the full web build passes. Visual evidence:
+`C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/mouse-recovery-restored.jpg`.
+
+### Player splash death and ragdoll audit (2026-10-05)
+
+`tests/player_death_parity.cfg` uses the stock Mars City Underground map,
+rocket launcher, ammunition and damage rules. Three rockets are fired at a fixed
+wall, returning the living player to the same firing position between shots.
+There is no health assignment, forced death, corpse teleport or physics override.
+The replay runs in a disposable native save directory and never overwrites the
+user's QuickSave. Browser cleanup reloads that save with ordinary simulation,
+input and audio settings restored.
+
+All **nine player checkpoints match exactly at the serialized precision**,
+including position, velocity, view, health, weapon identity, ammo, clip and
+readiness. Health progresses 100 -> 59 -> 18 -> -23. The death checkpoints show
+the weapon released (`object`, zero clip, ammo -1, not ready), ragdoll motion at
+frames 383 and 473, and zero velocity at frame 773. All nine projectile snapshots
+also match exactly, including three real launches, impacts and final cleanup.
+All nine recorded game/render clocks, frame numbers and random seeds match.
+This samples the death sequence at fixed checkpoints; it does not establish the
+exact intervening death-event frame or compare death rendering pixel by pixel.
+
+Evidence: ignored `build-windows/player-death-clean-native/full-console.txt`
+and `build-web/player-death-clean-console.txt`. Earlier rejected probes either
+left the player alive after the lift door opened or teleported the dead body;
+neither is used as accepted death coverage. The clean fixture aims at a fixed
+wall and allows the dead body to fall and settle without repositioning it.
+
+The gameplay and projectile verifiers accept `--scenario player-death`.
+Five new asset-free regression tests reject incomplete phases, absent stock
+splash damage, changed timing, retained weapons, missing ragdoll motion,
+unfinished settling, missing launches/impacts/cleanup and platform view drift.
+All **59 Python tests pass**. CI includes the new tests and fixture path filters.
+The engine implementation did not change during this audit.
+
+This verifies one genuine self-inflicted player death, weapon release, ragdoll
+settling and projectile cleanup. Enemy-caused death, restart/load UI after death, interrupted
+death animations, broad campaign coverage and graphics fidelity remain open.
+
+### Death-screen keyboard recovery audit (2026-10-05)
+
+The genuine three-rocket death replay was allowed to continue with
+`com_fixedTic 0` and `g_stopTime 0`. The normal session reached the stock
+Restart / Load / Main Menu screen. Tab followed by Enter activated Restart,
+which loaded the map's autosave and returned to a living player with 100 health.
+This verifies the existing browser restart action through real keyboard input;
+it does not establish native/browser autosave state parity.
+
+The restart GUI was outside the browser's main-menu keyboard policy, so it had
+no visible focus outline. `Web_IsKeyboardMenu` now includes the licensed stock
+`guis/restart.gui` along with the two main menus. The restart screen uses the
+same visible-control traversal, modal focus ownership, Enter activation and
+focus outline. Graphics-choice overrides remain limited to the main menus.
+Unknown/mod GUI behavior and native engine behavior are unchanged.
+
+The compiled menu harness passes 111 checks, including restart-menu policy,
+case-insensitive matching, unknown-source exclusion and the absence of graphics
+overrides on the death menu. All 59 Python tests pass.
+
+The first live Load-panel test also exposed focus escaping to Main Menu behind
+the overlay: the stock panel omits its modal flag. The web policy now marks only
+`guis/restart.gui`'s `LoadGame` container modal. Its closed zero-size rectangle
+continues to be skipped. The additional harness checks guard this exact source
+and window match, null arguments and exclusion of other stock/mod windows.
+
+Both web builds pass. Live verification of the final build shows the focus
+outline on Restart and Load. Opening Load then pressing Tab enters the save
+list; forward wrap and Shift+Tab stay within the list, Load Game and Cancel.
+QuickSave was selected with arrow keys, and the focused Load Game button was
+activated with Enter. Visual evidence:
+`C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/death-load-focus.jpg`.
+The game loaded Mars City and returned to the actual saved view
+`(1263.77 -1501 68.25)`, yaw 180, without a positioning command. Normal input,
+simulation and audio were restored (`in_nograb 0`, `com_fixedTic 0`,
+`g_stopTime 0`, `s_noSound 0`); WebAudio reported a running context with nine
+playing sources. Evidence: ignored `build-web/death-load-restored-console.txt`
+and `C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/death-load-restored.jpg`.
+
+The death fixture now explicitly selects stock normal difficulty and default
+damage protection (`g_skill 1`, `g_damageScale 1`, `g_useDynamicProtection 1`,
+`g_testDeath 0`). A fresh native run and the final rebuilt web run still match
+all nine player/projectile/clock checkpoints. Evidence: ignored
+`build-windows/player-death-defaults-native/full-console.txt` and
+`build-web/player-death-defaults-console.txt`.
+
+### Hangar material capture and clipboard feedback audit (2026-10-05)
+
+`tests/render_hangar_parity.cfg` captures the reported red-rail viewpoint and
+two nearby stair/floor views in stock Mars City, with soft particles, shadows,
+bump mapping and specular enabled. Both builds use Ultra texture quality,
+8x anisotropy and neutral gamma/brightness. The fixture uses noclip for a fixed
+camera and excludes HUD, weapon and player-view effects. The latter exclusion
+is necessary here: the initial native captures were entirely black because the
+opening player-view fade covered the world. Those black captures are not accepted
+as visual parity evidence. This fixture does not test that fade or normal movement.
+
+Native 640x480 PNGs are under ignored
+`build-windows/render-hangar-world-native/base/screenshots/`. Three browser
+captures were generated at 640x480, and their camera readbacks match native.
+All three recorded game/render clocks, frames and random seeds match exactly:
+frames 11/12/13, times 176/192/208 ms, seeds 51639948/2023847007/-395835503.
+Evidence: ignored `build-windows/render-hangar-world-native/full-console.txt`
+and `build-web/render-hangar/console.txt`.
+
+The displayed browser preview shows normal rails and floor at the saved-rail
+view. Browser proof is JPEG UI capture, not the engine's raw PNG. The embedded
+browser's Download PNG action did not produce an observable export through the
+browser automation, and Copy image remained pending. Accordingly no pixel-error
+metric or native/web rendering parity claim is made for these captures.
+Raw browser PNG acquisition and moving-camera coverage remain open.
+Visual evidence:
+`C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/hangar-saved-rail-visible.jpg`.
+
+The live pending clipboard operation exposed missing feedback: Copy image
+disabled itself while the status continued to say the screenshot was ready.
+The launcher now reports copying immediately and, after five seconds, reports
+that the browser is still waiting and suggests checking for a clipboard prompt
+or trying Download PNG. It keeps one clipboard write pending at a time and
+does not report success until the browser resolves it. The timer is cleared
+when the operation settles and cannot overwrite a newer screenshot's status.
+All seven browser regression groups pass, including pending-write feedback,
+replacement-image protection and stale-timer checks.
+
+A replacement capture also explains when an earlier clipboard write keeps Copy
+disabled. The web build completes successfully with both feedback changes.
+These feedback states are regression-tested; live browser verification of the
+updated feedback remains open.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,

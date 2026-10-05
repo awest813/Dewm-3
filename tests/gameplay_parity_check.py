@@ -72,6 +72,9 @@ def compare(native, web, tolerance=0.001, scenario='movement'):
     if scenario == 'explosive-weapons':
         validate_explosive_weapons(native)
         return len(native)
+    if scenario == 'player-death':
+        validate_player_death(native)
+        return len(native)
     if scenario == 'melee-hit':
         expected = ('chainsaw_selected', 'target_spawned', 'chainsaw_first_hit',
                     'chainsaw_followup', 'chainsaw_kill', 'chainsaw_recovery')
@@ -112,6 +115,28 @@ def compare(native, web, tolerance=0.001, scenario='movement'):
     if not clips or len(set(clips)) < 2 or clips[-1] <= min(clips):
         raise ValueError('sequence did not exercise ammunition consumption and reload')
     return len(native)
+
+
+def validate_player_death(rows):
+    expected = ('death_selected', 'death_shot1', 'death_impact1', 'death_shot2',
+                'death_impact2', 'death_shot3', 'death_impact3', 'death_fall', 'death_settled')
+    if tuple(row.get('phase') for row in rows) != expected:
+        raise ValueError('player death scenario is incomplete or out of order')
+    if tuple(row['ticks'] for row in rows) != (100, 1, 120, 1, 120, 1, 30, 90, 300):
+        raise ValueError('player death timing coverage changed')
+    if tuple(row['health'] for row in rows) != (100, 100, 59, 59, 18, 18, -23, -23, -23):
+        raise ValueError('player death: three stock splash hits were not exercised')
+    if any(row.get('weapon') != 'weapon_rocketlauncher' for row in rows[:6]):
+        raise ValueError('player death: wrong live weapon')
+    if tuple(row['ammo'] for row in rows[:6]) != (96, 95, 95, 94, 94, 93):
+        raise ValueError('player death: three shots did not consume ammunition')
+    for row in rows[6:]:
+        if row.get('weapon') != 'object' or row['ready'] or row['ammo'] != -1 or row['clip']:
+            raise ValueError('player death: weapon was not released')
+    if not any(any(abs(value) > 0.01 for value in row['velocity']) for row in rows[6:8]):
+        raise ValueError('player death: ragdoll motion missing')
+    if max(abs(value) for value in rows[-1]['velocity']) > 0.001:
+        raise ValueError('player death: ragdoll did not settle')
 
 
 def validate_explosive_weapons(rows):
@@ -176,7 +201,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('native_log')
     parser.add_argument('web_log')
-    parser.add_argument('--scenario', choices=('movement', 'save-weapons', 'explosive-weapons', 'melee-hit', 'bfg-damage', 'bfg-beam'), default='movement')
+    parser.add_argument('--scenario', choices=('movement', 'save-weapons', 'explosive-weapons', 'melee-hit', 'bfg-damage', 'bfg-beam', 'player-death'), default='movement')
     args = parser.parse_args()
     count = compare(checkpoints(args.native_log), checkpoints(args.web_log), scenario=args.scenario)
     print(f'PASS: {count} native/web simulation checkpoints (position/velocity tolerance 0.001 units)')

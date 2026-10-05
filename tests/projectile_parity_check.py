@@ -74,6 +74,24 @@ def compare_projectiles(native, web, tolerance=0.001, scenario='explosive-weapon
                 delta = max(abs(x-y) for x, y in zip(a[field], b[field]))
                 if delta > tolerance:
                     raise ValueError(f'{left["phase"]}: projectile {field} differs by {delta}')
+    if scenario == 'player-death':
+        expected = ('death_selected', 'death_shot1', 'death_impact1', 'death_shot2',
+                    'death_impact2', 'death_shot3', 'death_impact3', 'death_fall', 'death_settled')
+        if tuple(row['phase'] for row in native) != expected:
+            raise ValueError('player death projectile coverage is incomplete')
+        for row in native:
+            if any(item['definition'] != 'projectile_rocket' for item in row['items']):
+                raise ValueError('player death: wrong projectile')
+            if row['phase'] in ('death_shot1', 'death_shot2', 'death_shot3'):
+                moving = [item for item in row['items'] if not item['hidden'] and max(map(abs, item['velocity'])) > 800]
+                if len(moving) != 1:
+                    raise ValueError('player death: rocket launch missing')
+            if row['phase'] in ('death_impact1', 'death_impact2', 'death_impact3'):
+                if not row['count'] or any(item['velocity'] != (0, 0, 0) for item in row['items']):
+                    raise ValueError('player death: rocket impact missing')
+        if native[0]['count'] or native[-1]['count']:
+            raise ValueError('player death: projectile cleanup missing')
+        return len(native)
     if scenario == 'bfg-beam':
         phases = {row['phase']: row for row in native}
         for phase in ('beam_release', 'beam_before_damage', 'beam_damage1', 'beam_damage2'):
@@ -102,10 +120,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('native_log')
     parser.add_argument('web_log')
+    parser.add_argument('--scenario', choices=('explosive-weapons', 'player-death'), default='explosive-weapons')
     args = parser.parse_args()
     try:
-        count = compare(checkpoints(args.native_log), checkpoints(args.web_log), scenario='explosive-weapons')
-        compare_projectiles(snapshots(args.native_log), snapshots(args.web_log))
+        count = compare(checkpoints(args.native_log), checkpoints(args.web_log), scenario=args.scenario)
+        compare_projectiles(snapshots(args.native_log), snapshots(args.web_log), scenario=args.scenario)
     except (ValueError, OSError) as error:
         parser.exit(1, f'Projectile comparison failed: {error}\n')
     print(f'PASS: {count} native/web weapon and projectile checkpoints (tolerance 0.001 units)')

@@ -835,7 +835,7 @@ const char *idWindow::HandleEvent(const sysEvent_t *event, bool *updateVisuals) 
 				}
 			} else if (event->evValue == K_TAB && event->evValue2) {
 #ifdef __EMSCRIPTEN__
-				if ((flags & WIN_DESKTOP) && Web_IsStockMenu(gui->GetSourceFile())) {
+				if ((flags & WIN_DESKTOP) && Web_IsKeyboardMenu(gui->GetSourceFile())) {
 					idWindow *next = FindWebFocus(GetFocusedChild(), idKeyInput::IsDown(K_SHIFT));
 					if (next) SetFocus(next);
 					return "";
@@ -1312,7 +1312,7 @@ void idWindow::Redraw(float x, float y) {
 	}
 
 #ifdef __EMSCRIPTEN__
-	if ((flags & WIN_DESKTOP) && Web_IsStockMenu(gui->GetSourceFile())) {
+	if ((flags & WIN_DESKTOP) && Web_IsKeyboardMenu(gui->GetSourceFile())) {
 		idWindow *focus = GetFocusedChild();
 		bool show = focus != NULL;
 		for (idWindow *w = focus; w && show; w = w->parent) {
@@ -1469,13 +1469,18 @@ void idWindow::SetupFromState() {
 	}
 
 	CalcClientRect(0,0);
+#ifdef __EMSCRIPTEN__
+	// The stock death-screen Load panel covers the menu but omits modal 1.
+	// Its zero-size closed rect is already excluded from focus traversal.
+	if (Web_IsKeyboardModal(gui->GetSourceFile(), name.c_str())) flags |= WIN_MODAL;
+#endif
 	if ( scripts[ ON_ACTION ] ) {
 		cursor = idDeviceContext::CURSOR_HAND;
 		flags |= WIN_CANFOCUS;
 #ifdef __EMSCRIPTEN__
 		// Stock buttons otherwise require a mouse even after Tab focuses them.
 		// Choice controls keep their native Left/Right behavior.
-		if (Web_IsStockMenu(gui->GetSourceFile()) && !GetWinVarByName("choices")) flags |= WIN_WANTENTER;
+		if (Web_IsKeyboardMenu(gui->GetSourceFile()) && !GetWinVarByName("choices")) flags |= WIN_WANTENTER;
 #endif
 	}
 }
