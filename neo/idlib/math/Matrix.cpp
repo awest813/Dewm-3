@@ -166,16 +166,18 @@ idAngles idMat3::ToAngles( void ) const {
 		sp = -1.0f;
 	}
 
-	theta = -asin( sp );
+	// Preserve double radians through degree conversion, independently of
+	// the float overloads supplied by a platform's C++ math.h wrapper.
+	theta = -asin( static_cast<double>( sp ) );
 	cp = cos( theta );
 
 	if ( cp > 8192.0f * idMath::FLT_EPSILON ) {
 		angles.pitch	= RAD2DEG( theta );
-		angles.yaw		= RAD2DEG( atan2( mat[ 0 ][ 1 ], mat[ 0 ][ 0 ] ) );
-		angles.roll		= RAD2DEG( atan2( mat[ 1 ][ 2 ], mat[ 2 ][ 2 ] ) );
+		angles.yaw		= RAD2DEG( atan2( static_cast<double>( mat[ 0 ][ 1 ] ), static_cast<double>( mat[ 0 ][ 0 ] ) ) );
+		angles.roll		= RAD2DEG( atan2( static_cast<double>( mat[ 1 ][ 2 ] ), static_cast<double>( mat[ 2 ][ 2 ] ) ) );
 	} else {
 		angles.pitch	= RAD2DEG( theta );
-		angles.yaw		= RAD2DEG( -atan2( mat[ 1 ][ 0 ], mat[ 1 ][ 1 ] ) );
+		angles.yaw		= RAD2DEG( -atan2( static_cast<double>( mat[ 1 ][ 0 ] ), static_cast<double>( mat[ 1 ][ 1 ] ) ) );
 		angles.roll		= 0;
 	}
 	return angles;

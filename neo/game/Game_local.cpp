@@ -59,6 +59,18 @@ If you have questions concerning this license or the applicable additional terms
 
 const int NUM_RENDER_PORTAL_BITS	= idMath::BitsForInteger( PS_BLOCK_ALL );
 
+// Read-only tracing for locating native/web simulation divergence. Disabled
+// by default; never advance or reset the generator to make captures agree.
+static idCVar g_debugRandomSeed( "g_debugRandomSeed", "0", CVAR_GAME | CVAR_BOOL | CVAR_CHEAT,
+	"trace random seeds during map spawning and simulation ticks" );
+
+static void TraceRandomSeed( const char *phase, int index ) {
+	if ( g_debugRandomSeed.GetBool() ) {
+		gameLocal.Printf( "RANDOM_STATE phase=%s index=%d frame=%d seed=%d\n",
+			phase, index, gameLocal.framenum, gameLocal.random.GetSeed() );
+	}
+}
+
 const float	DEFAULT_GRAVITY			= 1066.0f;
 const idVec3	DEFAULT_GRAVITY_VEC3( 0, 0, -DEFAULT_GRAVITY );
 const int	CINEMATIC_SKIP_DELAY	= SEC2MS( 2.0f );
@@ -1177,6 +1189,7 @@ idGameLocal::MapPopulate
 ===================
 */
 void idGameLocal::MapPopulate( void ) {
+	TraceRandomSeed( "map_begin", 0 );
 
 	if ( isMultiplayer ) {
 		cvarSystem->SetCVarBool( "r_skipSpecular", false );
@@ -1189,6 +1202,7 @@ void idGameLocal::MapPopulate( void ) {
 
 	// prepare the list of randomized initial spawn spots
 	RandomizeInitialSpawns();
+	TraceRandomSeed( "spawn_complete", 0 );
 
 	// spawnCount - 1 is the number of entities spawned into the map, their indexes started at MAX_CLIENTS (included)
 	// mapSpawnCount is used as the max index of map entities, it's the first index of non-map entities
@@ -1199,6 +1213,7 @@ void idGameLocal::MapPopulate( void ) {
 	// before the physics are run so entities can bind correctly
 	Printf( "==== Processing events ====\n" );
 	idEvent::ServiceEvents();
+	TraceRandomSeed( "startup_events", 0 );
 }
 
 /*
@@ -2273,6 +2288,7 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 		// make sure the random number counter is used each frame so random events
 		// are influenced by the player's actions
 		random.RandomInt();
+		TraceRandomSeed( "tick_begin", framenum );
 
 		if ( player ) {
 			// update the renderview so that any gui videos play from the right frame
@@ -2310,7 +2326,7 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 		timer_think.Start();
 
 		// let entities think
-		if ( g_timeentities.GetFloat() ) {
+		if ( g_timeentities.GetFloat() || g_debugRandomSeed.GetBool() ) {
 			num = 0;
 			for( ent = activeEntities.Next(); ent != NULL; ent = ent->activeNode.Next() ) {
 				if ( g_cinematic.GetBool() && inCinematic && !ent->cinematic ) {
@@ -2319,10 +2335,16 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 				}
 				timer_singlethink.Clear();
 				timer_singlethink.Start();
+				const int seedBeforeThink = random.GetSeed();
 				ent->Think();
+				if ( g_debugRandomSeed.GetBool() && framenum <= 4 && random.GetSeed() != seedBeforeThink ) {
+					TraceRandomSeed( "think_entity", ent->entityNumber );
+					Printf( "RANDOM_ENTITY index=%d name=%s type=%s\n",
+						ent->entityNumber, ent->name.c_str(), ent->GetClassname() );
+				}
 				timer_singlethink.Stop();
 				ms = timer_singlethink.Milliseconds();
-				if ( ms >= g_timeentities.GetFloat() ) {
+				if ( g_timeentities.GetFloat() && ms >= g_timeentities.GetFloat() ) {
 					Printf( "%d: entity '%s': %.1f ms\n", time, ent->name.c_str(), ms );
 				}
 				num++;
@@ -2367,7 +2389,9 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 		timer_events.Start();
 
 		// service any pending events
+		TraceRandomSeed( "think_complete", framenum );
 		idEvent::ServiceEvents();
+		TraceRandomSeed( "tick_events", framenum );
 
 		timer_events.Stop();
 
@@ -3289,6 +3313,7 @@ void idGameLocal::SpawnMapEntities( void ) {
 	if ( !SpawnEntityDef( args ) || !entities[ ENTITYNUM_WORLD ] || !entities[ ENTITYNUM_WORLD ]->IsType( idWorldspawn::Type ) ) {
 		Error( "Problem spawning world entity" );
 	}
+	TraceRandomSeed( "map_entity", 0 );
 
 	num = 1;
 	inhibit = 0;
@@ -3301,7 +3326,11 @@ void idGameLocal::SpawnMapEntities( void ) {
 			// precache any media specified in the map entity
 			CacheDictionaryMedia( &args );
 
+			const int seedBeforeSpawn = random.GetSeed();
 			SpawnEntityDef( args );
+			if ( random.GetSeed() != seedBeforeSpawn ) {
+				TraceRandomSeed( "map_entity", i );
+			}
 			num++;
 		} else {
 			inhibit++;

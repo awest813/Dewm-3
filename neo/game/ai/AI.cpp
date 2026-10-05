@@ -35,6 +35,20 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "ai/AI.h"
 
+static idCVar ai_debugRandomEntity( "ai_debugRandomEntity", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"trace early AI random-state and head-alignment updates for an entity; -1 disables" );
+
+static bool TraceAIRandomEnabled( int entityNumber ) {
+	return ai_debugRandomEntity.GetInteger() == entityNumber && gameLocal.framenum <= 4;
+}
+
+static void TraceAIRandom( int entityNumber, const char *phase ) {
+	if ( TraceAIRandomEnabled( entityNumber ) ) {
+		gameLocal.Printf( "AI_RANDOM phase=%s entity=%d frame=%d seed=%d\n",
+			phase, entityNumber, gameLocal.framenum, gameLocal.random.GetSeed() );
+	}
+}
+
 static const char *moveCommandString[ NUM_MOVE_COMMANDS ] = {
 	"MOVE_NONE",
 	"MOVE_FACE_ENEMY",
@@ -1049,6 +1063,7 @@ idAI::Think
 =====================
 */
 void idAI::Think( void ) {
+	TraceAIRandom( entityNumber, "think_begin" );
 	// if we are completely closed off from the player, don't do anything at all
 	if ( CheckDormant() ) {
 		return;
@@ -1126,6 +1141,7 @@ void idAI::Think( void ) {
 		}
 
 		// clear pain flag so that we recieve any damage between now and the next time we run the script
+		TraceAIRandom( entityNumber, "movement_complete" );
 		AI_PAIN = false;
 		AI_SPECIAL_DAMAGE = 0;
 		AI_PUSHED = false;
@@ -1149,7 +1165,9 @@ void idAI::Think( void ) {
 
 	UpdateMuzzleFlash();
 	UpdateAnimation();
+	TraceAIRandom( entityNumber, "animation_complete" );
 	UpdateParticles();
+	TraceAIRandom( entityNumber, "particles_complete" );
 	Present();
 	UpdateDamageEffects();
 	LinkCombat();
@@ -1194,6 +1212,7 @@ idAI::UpdateAIScript
 */
 void idAI::UpdateAIScript( void ) {
 	UpdateScript();
+	TraceAIRandom( entityNumber, "script_complete" );
 
 	// clear the hit enemy flag so we catch the next time we hit someone
 	AI_HIT_ENEMY = false;
@@ -1201,6 +1220,7 @@ void idAI::UpdateAIScript( void ) {
 	if ( allowHiddenMovement || !IsHidden() ) {
 		// update the animstate if we're not hidden
 		UpdateAnimState();
+		TraceAIRandom( entityNumber, "anim_state_complete" );
 	}
 }
 
@@ -4705,6 +4725,7 @@ idAI::UpdateAnimationControllers
 ================
 */
 bool idAI::UpdateAnimationControllers( void ) {
+	TraceAIRandom( entityNumber, "controllers_begin" );
 	idVec3		local;
 	idVec3		focusPos;
 	idQuat		jawQuat;
@@ -4764,6 +4785,7 @@ bool idAI::UpdateAnimationControllers( void ) {
 	// head entity and no ik will only transform their joints once.  Set g_debuganim to the current entity number
 	// in order to see how many times an entity transforms the joints per frame.
 	idActor::UpdateAnimationControllers();
+	TraceAIRandom( entityNumber, "controllers_ik" );
 
 	idEntity *focusEnt = focusEntity.GetEntity();
 	if ( !allowJointMod || !allowEyeFocus || ( gameLocal.time >= focusTime ) ) {
@@ -4784,6 +4806,11 @@ bool idAI::UpdateAnimationControllers( void ) {
 	// determine yaw from origin instead of from focus joint since joint may be offset, which can cause us to bounce between two angles
 	dir = focusPos - orientationJointPos;
 	newLookAng.yaw = idMath::AngleNormalize180( dir.ToYaw() - orientationJointYaw );
+	if ( TraceAIRandomEnabled( entityNumber ) ) {
+		gameLocal.Printf( "AI_YAW entity=%d frame=%d orientation=%.9g direction=%.9g vector=%.9g,%.9g,%.9g axis=%.9g,%.9g,%.9g\n",
+			entityNumber, gameLocal.framenum, orientationJointYaw, dir.ToYaw(), dir.x, dir.y, dir.z,
+			orientationJointAxis[0].x, orientationJointAxis[0].y, orientationJointAxis[0].z );
+	}
 	newLookAng.roll = 0.0f;
 	newLookAng.pitch = 0.0f;
 
@@ -4801,6 +4828,12 @@ bool idAI::UpdateAnimationControllers( void ) {
 	newLookAng.roll	= 0.0f;
 
 	diff = newLookAng - lookAng;
+	if ( TraceAIRandomEnabled( entityNumber ) ) {
+		gameLocal.Printf( "AI_LOOK entity=%d frame=%d new=%.9g,%.9g old_eye=%.9g,%.9g diff=%.9g,%.9g changed=%d align=%d force=%d seed=%d\n",
+			entityNumber, gameLocal.framenum, newLookAng.pitch, newLookAng.yaw,
+			eyeAng.pitch, eyeAng.yaw, diff.pitch, diff.yaw, eyeAng != diff,
+			alignHeadTime, forceAlignHeadTime, gameLocal.random.GetSeed() );
+	}
 
 	if ( eyeAng != diff ) {
 		eyeAng = diff;
@@ -4814,6 +4847,7 @@ bool idAI::UpdateAnimationControllers( void ) {
 	}
 
 	if ( idMath::Fabs( newLookAng.yaw ) < 0.1f ) {
+		TraceAIRandom( entityNumber, "controllers_eye" );
 		alignHeadTime = gameLocal.time;
 	}
 
@@ -4822,6 +4856,7 @@ bool idAI::UpdateAnimationControllers( void ) {
 		destLookAng = newLookAng;
 		destLookAng.Clamp( lookMin, lookMax );
 	}
+	TraceAIRandom( entityNumber, "controllers_align" );
 
 	diff = destLookAng - lookAng;
 	if ( ( lookMin.pitch == -180.0f ) && ( lookMax.pitch == 180.0f ) ) {

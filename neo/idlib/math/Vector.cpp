@@ -90,7 +90,10 @@ float idVec3::ToYaw( void ) const {
 	if ( ( y == 0.0f ) && ( x == 0.0f ) ) {
 		yaw = 0.0f;
 	} else {
-		yaw = RAD2DEG( atan2( y, x ) );
+		// Keep radians in double precision until conversion to degrees. C++
+		// math.h overloads otherwise select atan2f on some platforms, changing
+		// angle comparisons (and the AI random sequence) by a float rounding.
+		yaw = RAD2DEG( atan2( static_cast<double>( y ), static_cast<double>( x ) ) );
 		if ( yaw < 0.0f ) {
 			yaw += 360.0f;
 		}
@@ -116,7 +119,7 @@ float idVec3::ToPitch( void ) const {
 		}
 	} else {
 		forward = ( float )idMath::Sqrt( x * x + y * y );
-		pitch = RAD2DEG( atan2( z, forward ) );
+		pitch = RAD2DEG( atan2( static_cast<double>( z ), static_cast<double>( forward ) ) );
 		if ( pitch < 0.0f ) {
 			pitch += 360.0f;
 		}
@@ -143,13 +146,13 @@ idAngles idVec3::ToAngles( void ) const {
 			pitch = 270.0f;
 		}
 	} else {
-		yaw = RAD2DEG( atan2( y, x ) );
+		yaw = RAD2DEG( atan2( static_cast<double>( y ), static_cast<double>( x ) ) );
 		if ( yaw < 0.0f ) {
 			yaw += 360.0f;
 		}
 
 		forward = ( float )idMath::Sqrt( x * x + y * y );
-		pitch = RAD2DEG( atan2( z, forward ) );
+		pitch = RAD2DEG( atan2( static_cast<double>( z ), static_cast<double>( forward ) ) );
 		if ( pitch < 0.0f ) {
 			pitch += 360.0f;
 		}
@@ -176,13 +179,13 @@ idPolar3 idVec3::ToPolar( void ) const {
 			pitch = 270.0f;
 		}
 	} else {
-		yaw = RAD2DEG( atan2( y, x ) );
+		yaw = RAD2DEG( atan2( static_cast<double>( y ), static_cast<double>( x ) ) );
 		if ( yaw < 0.0f ) {
 			yaw += 360.0f;
 		}
 
 		forward = ( float )idMath::Sqrt( x * x + y * y );
-		pitch = RAD2DEG( atan2( z, forward ) );
+		pitch = RAD2DEG( atan2( static_cast<double>( z ), static_cast<double>( forward ) ) );
 		if ( pitch < 0.0f ) {
 			pitch += 360.0f;
 		}

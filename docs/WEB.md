@@ -7,6 +7,14 @@
 > Browser validation of rendering, audio, input, and save persistence remains
 > required before this target can be called supported.
 
+Latest accuracy evidence (2026-10-05): explicit double precision in vector
+angle conversion resolves the recorded native/browser AI random-state
+divergence and mask-only campaign haze/background comparison. All 596 trace
+checkpoints and three render-state checkpoints in that fixture now match.
+See **Vector-angle precision correction** below for tests, PNG measurements
+and limits. Broader campaign, physical pointer capture, browser recovery and
+sustained performance coverage remain unfinished.
+
 Local verification on 2026-10-03: Emscripten 4.0.23 compiled and linked the
 engine without game data, producing `dhewm3.html`, `dhewm3.js`, and
 `dhewm3.wasm`. The browser shell's data-validation regression tests passed.
@@ -968,6 +976,132 @@ off. The console is hidden and normal play is running. Restoration evidence is
 Remaining work includes the simulation-state divergence, mask-only haze and
 background lighting, other campaign materials, broader gameplay/campaign cases,
 captured physical mouse input and browser recovery/performance coverage.
+
+### Random-state investigation (2026-10-05)
+
+The three recorded heat-fixture browser seeds are exactly **four random draws
+ahead** of their native counterparts in the stock 32-bit `idRandom` sequence.
+The offset stays constant across these views; this narrows the investigation
+but does not establish the point or cause of divergence. A fresh isolated
+native run with OpenAL initialized (`s_noSound 0`, output attenuated with
+`s_volume_dB -60`) reproduces all three earlier native seeds. Disabling native
+audio therefore does not explain this particular mismatch. The new run's
+console and PNGs are under ignored `build-windows/render-heat-sound-native`.
+
+`tests/render_state_parity_check.py` now compares recorded game/render clocks,
+frame numbers and random seeds before pixel analysis. It rejects missing,
+truncated or unequal state records and diagnoses random draw offsets within
+4096 draws in either direction. It does not accept a seed mismatch merely
+because the offset is constant. Seven regression cases include native console
+wrapping inside labels and seed digits. The checker passes the old/native-audio
+pair and rejects the current native/browser pair at checkpoint 1:
+
+```sh
+python tests/render_state_parity_check.py native-console.txt web-console.txt
+# State comparison failed: render checkpoint 1 random_seed:
+# -471451794 / 1286920474 (web 4 random draws ahead)
+```
+
+Matching these four fields alone would still not prove matching entity state,
+camera, settings or campaign fidelity. The next investigation must locate the
+first differing draw during map setup or early simulation before attributing
+the remaining mask-only background difference to the renderer.
+
+The subsequent optional `g_debugRandomSeed 1` trace narrows this further:
+native and browser agree through map spawning and startup events, with seeds
+472315226 after spawning and 2063731475 after startup events. The first
+divergence occurs inside tick 1 entity thinking, where the browser advances
+one extra draw. That offset grows to two, three and four after thinking in
+ticks 2, 3 and 4, then stays four through the captured views. The initial
+2505-record comparison is preserved in ignored
+`build-windows/random-trace-native/full-console.txt` and
+`build-web/random-trace-console.txt`. The trace does not reset or advance the
+generator, and is disabled by default. To avoid overflowing the browser's
+bounded console, detailed output is restricted to spawns and early entity
+updates that change the seed; entity names accompany the early updates.
+
+The checker also accepts `--trace` to identify the first unequal trace
+checkpoint, checking phase, entity/map index and frame before seed values.
+Nine regression cases cover both forms of evidence. For long native runs,
+use the full engine log: the in-game `condump` history can lose early records.
+
+The sparse rerun produces 596 trace records on each platform. Their first
+unequal checkpoint is `think_entity`, entity 1954, frame 1:
+`monster_zsec_machinegun_7` (`idAI`). Native's seed after its update is
+697712057; browser's is 741003814, exactly one draw ahead. The preceding
+updates of player1, monster_zombie_jumpsuit_2 and monster_zsec_machinegun_9
+match. Evidence is in ignored
+`build-windows/random-trace-native/sparse-console.txt` and
+`build-web/random-sparse-console.txt`. This identifies the first divergent
+entity update, not the cause; its animation/script/head-alignment paths still
+need branch-level comparison. The final native and Release web trace builds
+pass (`random-sparse-build.log` in each build directory).
+
+### Vector-angle precision correction (2026-10-05)
+
+Branch tracing with optional `ai_debugRandomEntity 1954` finds the extra draw
+in eye/head alignment. Before correction, browser orientation yaw is 45 degrees
+and its focus direction is 45.0000076; native obtains 44.9999962 for both. The
+browser therefore enters the exact eye-angle-change branch in each of the
+first four ticks, while native does not. This changes random scheduling even
+though the visible angular difference is tiny.
+
+The cause is C++ `<math.h>` overload selection: the current MSVC native
+toolchain selects double `atan2` for float arguments, whereas the Emscripten
+headers select the float overload. `idVec3` yaw, pitch, angle and polar
+conversions now explicitly pass doubles to `atan2`, retaining double radians
+until conversion to degrees. The native precision and AI comparison rules
+are preserved; no tolerance, extra random draw or forced seed is introduced.
+
+`tests/web_angle_check.py` extracts the real `ToYaw` code and tests ten measured
+native Windows fixtures, including cardinal directions, all four quadrants,
+zero and the campaign's equal-coordinate focus vector. Native and optimized
+Emscripten runs pass; the old implicit-overload implementation fails the same
+test. CI runs this check alongside the existing timing/input checks.
+
+Fresh native and browser campaign runs now match all **596 random trace
+checkpoints**, all three recorded game/render clock/frame/seed states, and
+all 40 selected AI phase records plus four yaw and four head-alignment records.
+Evidence: ignored `build-windows/angle-fixed-native/full-console.txt` and
+`build-web/angle-fixed-console.txt`. Native and Release web builds pass
+(`angle-precision-build.log`). This closes the recorded seed divergence for
+this fixture; it does not establish complete campaign or rendering parity.
+
+Fresh 640×480 browser engine PNGs, exported through Copy image without JPEG
+conversion, also resolve the previously unexplained mask-only haze comparison.
+At the fixture's matching camera/time/frame/seed, the `(240,130)-(400,350)`
+region has on/off mean absolute errors of 0.000672/0.000038 byte levels and an
+effect-delta error of 0.000634, versus the earlier 0.889 effect-delta error.
+The larger background region `(190,150)-(430,465)` now differs by 0.0143 byte
+levels. Original PNGs and metrics are in ignored
+`build-web/render-parity/angle-fixed-mask-{on,off}.png` and
+`angle-fixed-mask-report.json`; camera/state capture evidence is in
+`build-web/angle-fixed-capture-console.txt`. The shader was not changed for
+this correction. These measurements apply to the captured fixture and remain
+evidence rather than a general fidelity threshold.
+
+### Matrix-angle precision correction (2026-10-05)
+
+The same overload audit finds early float rounding in `idMat3::ToAngles`:
+`asin(sp)` is rounded before assignment to its double `theta`, and float
+`atan2` results are rounded before degree conversion. Identical inputs produce
+browser pitch/roll of 30 degrees where native reports 29.9999981, and browser
+yaw of 45 where native reports 44.9999962. Near-vertical pitch also differs.
+The conversion now explicitly passes doubles to `asin` and all three `atan2`
+calls. Its existing sin clamp and gimbal-lock threshold are preserved.
+
+The extracted-code test now covers **20 vector/matrix-angle fixtures**, with
+native measurements for identity, yaw quadrants, pitch and roll, near gimbal
+lock and drift beyond the sin bounds. Both native and optimized Emscripten
+pass; reverting just the matrix calls to implicit overloads makes it fail.
+Both native and Release web engine builds pass (`matrix-precision-build.log`
+in their respective build directories). Fresh native and browser gameplay
+runs also match all 17 movement, jump, crouch, pistol-fire and reload
+checkpoints, with position/velocity tolerance of 0.001 units and no collision
+bypass. Evidence is in ignored
+`build-windows/matrix-gameplay-native/full-console.txt` and
+`build-web/matrix-gameplay-console.txt`. These fixtures do not establish
+complete campaign or rendering parity.
 
 ## 10. Files added for web
 

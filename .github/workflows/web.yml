@@ -14,8 +14,11 @@ on:
       - 'docs/WEB.md'
       - 'tests/render_program_state_check.py'
       - 'tests/render_shader_check.py'
+      - 'tests/render_state_parity_check.py'
+      - 'tests/test_render_state_parity.py'
       - 'tests/test_web_shell.js'
       - 'tests/web_mouse_check.py'
+      - 'tests/web_angle_check.py'
       - 'tests/web_gameplay_check.py'
       - 'tests/web_menu_check.py'
       - 'tests/gameplay_parity*'
@@ -33,8 +36,11 @@ on:
       - 'docs/WEB.md'
       - 'tests/render_program_state_check.py'
       - 'tests/render_shader_check.py'
+      - 'tests/render_state_parity_check.py'
+      - 'tests/test_render_state_parity.py'
       - 'tests/test_web_shell.js'
       - 'tests/web_mouse_check.py'
+      - 'tests/web_angle_check.py'
       - 'tests/web_gameplay_check.py'
       - 'tests/web_menu_check.py'
       - 'tests/gameplay_parity*'
@@ -111,6 +117,10 @@ jobs:
           node build-web/render-state-check.js
           python3 tests/render_shader_check.py build-web/render-check.html
           python3 tests/test_gameplay_parity.py
+          python3 tests/test_render_state_parity.py
+          python3 tests/web_angle_check.py build-web/web-angle-check.cpp
+          em++ build-web/web-angle-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/web-angle-check.js
+          node build-web/web-angle-check.js
           python3 tests/web_mouse_check.py build-web/web-mouse-check.cpp
           em++ build-web/web-mouse-check.cpp -sENVIRONMENT=node -o build-web/web-mouse-check.js
           node build-web/web-mouse-check.js
