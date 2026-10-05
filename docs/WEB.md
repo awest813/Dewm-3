@@ -15,6 +15,13 @@ See **Vector-angle precision correction** below for tests, PNG measurements
 and limits. Broader campaign, physical pointer capture, browser recovery and
 sustained performance coverage remain unfinished.
 
+The explosive-weapon audit found a grenade rigid-body mismatch, now corrected
+by preserving native precision in generated cylinder/cone collision vertices.
+Its recorded trajectory, splash damage and knockback now match. The longer
+fixture still exposes a rocket launch/flight mismatch; see **Collision-shape
+precision correction** below. Passing the earlier movement and AI fixtures
+does not establish general gameplay accuracy.
+
 Local verification on 2026-10-03: Emscripten 4.0.23 compiled and linked the
 engine without game data, producing `dhewm3.html`, `dhewm3.js`, and
 `dhewm3.wasm`. The browser shell's data-validation regression tests passed.
@@ -1102,6 +1109,139 @@ bypass. Evidence is in ignored
 `build-windows/matrix-gameplay-native/full-console.txt` and
 `build-web/matrix-gameplay-console.txt`. These fixtures do not establish
 complete campaign or rendering parity.
+
+A subsequent matrix-build campaign replay also preserves all 596 random
+trace checkpoints and all three recorded render clock/frame/seed states.
+Evidence: ignored `build-windows/matrix-heat-native/full-console.txt` and
+`build-web/matrix-heat-console.txt`.
+
+### Field-of-view precision correction (2026-10-05)
+
+The remaining camera projection calculation had the same implicit-overload
+problem in its three `tan` and three `atan2` calls. At a 60-degree base FOV,
+the original browser calculation returns 46.8264465 degrees vertically while
+native MSVC returns 46.8264503. Explicit double arguments now preserve native
+transcendental precision before the existing float assignments. The aspect
+ratio choices, portrait-screen horizontal minimum, and unavailable-screen
+fallback retain their original behavior.
+
+`tests/web_fov_check.py` extracts the actual `idGameLocal::CalcFov` method and
+checks 72 native values saved in asset-free `tests/fov_native.txt`. Coverage
+includes base FOVs of 60/90/110, auto/4:3/16:9/16:10, standard/wide/portrait
+dimensions and a zero-sized screen. Native and optimized Emscripten runs
+pass exactly; the original implicit-overload browser code fails. CI runs
+this check. These fixtures verify projection calculations, not complete
+campaign image parity.
+
+Both full engine builds pass (`fov-precision-build.log` in each build
+directory). A fresh native/browser campaign replay retains all 596 random
+trace checkpoints and all three recorded clock/frame/seed states. Evidence:
+ignored `build-windows/fov-heat-native/full-console.txt` and
+`build-web/fov-heat-console.txt`.
+
+### Explosive-weapon trajectory audit (2026-10-05, before shape correction)
+
+`testUsercmd` now also reports read-only snapshots of all player-owned
+projectiles: entity index/definition, hidden state, physical position and
+velocity, plus checkpoint frame/time/count. It does not advance time beyond
+the requested input ticks, create projectiles or modify their physics.
+Normal gameplay does not call this developer-only command.
+
+`tests/explosive_weapon_parity.cfg` exercises grenade hold/release, flight,
+bounce, detonation and removal; rocket and charged BFG fire, recovery/reload
+and removal; and chainsaw selection/attack/recovery input. Both full builds
+pass (`projectile-replay-build.log`). The fixture's 22 native checkpoints
+exercise real projectile motion and ammunition consumption. Grenade splash
+damage leaves native health at 63 and moves the player from
+`(-224,-2236,16.249998)` to `(-226.470337,-2254.741943,16.250038)`.
+
+The browser run before correction **fails parity**: grenade splash leaves
+health at 60 and position `(-228.025497,-2254.683838,16.250196)`. The grenade
+rests at different positions before exploding, so later rocket/BFG results
+cannot be treated as isolated weapon mismatches. Evidence is in ignored
+`build-windows/explosive-v2-native/full-console.txt` and
+`build-web/explosive-console.txt`.
+
+A denser follow-up records 265 projectile checkpoints. The first recorded
+exact difference is at frame 182 (2912 ms): matching position but native
+vertical velocity 407.628021 versus browser 407.628113. By frame 186, horizontal
+velocity differs by 0.001419 units. This locates the earliest observed
+divergence visible in these projectile snapshots after a collision. A later
+arithmetic trace locates an earlier launch-state discrepancy, described below.
+Evidence: ignored
+`build-windows/grenade-trace-native/full-console.txt` and
+`build-web/grenade-trace-console.txt`.
+
+`tests/projectile_parity_check.py` rejects divergent frame/time/count,
+entity identity, position/velocity and incomplete flight/removal evidence,
+alongside exact weapon/ammo/health/tick comparisons. Six asset-free projectile
+verifier regressions and three additional explosive-weapon coverage checks
+pass and run in CI. The real licensed-data fixture still fails at rocket flight
+after the grenade correction. This audit does not prove BFG targeting,
+chainsaw hit damage, death behavior or the complete campaign.
+
+### Collision-shape precision correction (2026-10-05)
+
+Optional `rb_debugEntityDef`, `rb_debugStartFrame` and `rb_debugEndFrame`
+enable read-only state and collision arithmetic tracing. Empty entity definition
+disables it by default. The 742-record first run finds angular momentum already
+different before the grenade's first integration at frame 160, rather than
+originating at the later bounce. Expanded launch tracing shows identical spin
+velocity but different off-diagonal inertia tensor values. Evidence: ignored
+`build-windows/rigid-launch-native/full-console.txt` and
+`build-web/rigid-launch-console.txt`. The original native trajectory is unchanged
+with diagnostics enabled. `tests/rigid_body_trace_check.py` compares exact
+ordered records; four verifier regressions cover wrapping, exponents, missing
+evidence and identity/value/order/count differences.
+
+The grenade uses a generated six-sided cylinder. `SetupCylinder` and
+`SetupCone` previously passed float angles to global `sin`/`cos`: native MSVC
+uses double results through vertex scaling, while Emscripten rounds them early
+using float overloads. For example, cylinder vertex 2's x coordinate becomes
+-1.50000024 on web instead of native -1.50000012. This changes mass properties,
+initial angular momentum and later collision behavior. Both shape generators
+now explicitly pass doubles, preserving native rounding at the vertex assignment.
+No inertia values, random seeds or physical tolerances are forced to agree.
+
+`tests/web_trace_shape_check.py` extracts the real vertex-generation prefixes
+and compares 66 cylinder/cone vertices with measured original native fixtures
+in asset-free `tests/trace_shape_native.txt`. Synthetic symmetric and shifted,
+nonuniform bounds cover 5/6/10-sided shapes. Native and optimized Emscripten
+pass exactly; the original implicit-overload code fails. CI runs this check.
+Polygon/mass/collision behavior is tested separately in the actual engine.
+
+Both full builds pass (`trace-shape-precision-build.log`). Fresh native and
+browser explosive-weapon runs now match **all seven grenade snapshots** and
+**all 747 recorded rigid-body arithmetic values**. Splash damage leaves health
+at 63 on both, with matching knockback and final grenade position. Evidence:
+ignored `build-windows/shape-fixed-explosive-native/full-console.txt` and
+`build-web/shape-fixed-explosive-console.txt`.
+
+Fresh post-fix movement/pistol runs match all 17 checkpoints. The earlier
+campaign fixture also retains all 596 random-state checkpoints and three render
+clock/frame/seed states. Logs are in ignored `shape-fixed-gameplay-native` and
+`shape-fixed-heat-native` directories under `build-windows`, with corresponding
+`shape-fixed-{gameplay,heat}-console.txt` browser logs under `build-web`.
+All 44 Python verifier/launcher regressions and six browser shell regression
+groups pass.
+
+The longer fixture remains incomplete: at `rocket_fire`, frame 672, projectile
+origin differs by 0.063454 units and launch velocity differs. The cause of this
+remaining spread/flight mismatch is not yet fully established. It must remain a failing
+comparison rather than being hidden with a wider tolerance. BFG targeting,
+melee hits, death and full campaign behavior remain unverified.
+
+A subsequent seed audit locates the first extra browser random draw at frame
+148, during `env_gibs_torso_1` (entity 245, `idAFEntity_Generic`) thinking.
+Player and AI seed changes before that entity match native. An explicit native
+generic-SIMD control also matches the original native trace. This narrows the
+remaining investigation to the articulated-body entity; it does not establish
+the responsible physics or sound branch. Optional `g_debugRandomEntityFrame`
+and `ai_debugRandomFrame` enable selected-frame tracing and default to -1.
+Evidence is in ignored `build-windows/entity148-native/full-console.txt`,
+`build-windows/entity148-generic-native/full-console.txt` and
+`build-web/entity148-console.txt`. The explosive fixture now records clock and
+seed state after every checkpoint and freezes at the end for comparison.
 
 ## 10. Files added for web
 

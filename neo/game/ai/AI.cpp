@@ -37,9 +37,12 @@ If you have questions concerning this license or the applicable additional terms
 
 static idCVar ai_debugRandomEntity( "ai_debugRandomEntity", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
 	"trace early AI random-state and head-alignment updates for an entity; -1 disables" );
+static idCVar ai_debugRandomFrame( "ai_debugRandomFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"additional simulation frame for selected AI random tracing; -1 disables" );
 
 static bool TraceAIRandomEnabled( int entityNumber ) {
-	return ai_debugRandomEntity.GetInteger() == entityNumber && gameLocal.framenum <= 4;
+	return ai_debugRandomEntity.GetInteger() == entityNumber &&
+		( gameLocal.framenum <= 4 || gameLocal.framenum == ai_debugRandomFrame.GetInteger() );
 }
 
 static void TraceAIRandom( int entityNumber, const char *phase ) {

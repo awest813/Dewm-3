@@ -40,6 +40,38 @@ END_CLASS
 
 const float STOP_SPEED		= 10.0f;
 
+// Opt-in, read-only diagnostics for native/web rigid-body comparisons.
+static idCVar rb_debugEntityDef( "rb_debugEntityDef", "", CVAR_GAME | CVAR_CHEAT,
+	"trace rigid-body arithmetic for this entity definition; empty disables" );
+static idCVar rb_debugStartFrame( "rb_debugStartFrame", "0", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"first simulation frame included in rigid-body arithmetic tracing" );
+static idCVar rb_debugEndFrame( "rb_debugEndFrame", "0", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"last simulation frame included in rigid-body arithmetic tracing" );
+
+static bool TraceRigidBodyEnabled( const idEntity *entity ) {
+	return rb_debugEntityDef.GetString()[0] && entity &&
+		gameLocal.framenum >= rb_debugStartFrame.GetInteger() &&
+		gameLocal.framenum <= rb_debugEndFrame.GetInteger() &&
+		!idStr::Icmp( entity->GetEntityDefName(), rb_debugEntityDef.GetString() );
+}
+
+static void TraceRigidBodyVector( const idEntity *entity, const char *phase, const char *field, const idVec3 &value ) {
+	gameLocal.Printf( "RB_TRACE phase=%s entity=%d frame=%d field=%s v=%.9g,%.9g,%.9g\n",
+		phase, entity->entityNumber, gameLocal.framenum, field, value.x, value.y, value.z );
+}
+
+static void TraceRigidBodyState( const idEntity *entity, const char *phase, const rigidBodyPState_t &state ) {
+	if ( !TraceRigidBodyEnabled( entity ) ) {
+		return;
+	}
+	TraceRigidBodyVector( entity, phase, "position", state.i.position );
+	TraceRigidBodyVector( entity, phase, "linearMomentum", state.i.linearMomentum );
+	TraceRigidBodyVector( entity, phase, "angularMomentum", state.i.angularMomentum );
+	TraceRigidBodyVector( entity, phase, "orientation0", state.i.orientation[0] );
+	TraceRigidBodyVector( entity, phase, "orientation1", state.i.orientation[1] );
+	TraceRigidBodyVector( entity, phase, "orientation2", state.i.orientation[2] );
+}
+
 
 #undef RB_TIMINGS
 
@@ -150,6 +182,19 @@ bool idPhysics_RigidBody::CollisionImpulse( const trace_t &collision, idVec3 &im
 		impulseDenominator += info.invMass + ( ( info.invInertiaTensor * info.position.Cross( collision.c.normal ) ).Cross( info.position ) * collision.c.normal );
 	}
 	impulse = (impulseNumerator / impulseDenominator) * collision.c.normal;
+	if ( TraceRigidBodyEnabled( self ) ) {
+		TraceRigidBodyVector( self, "collision", "normal", collision.c.normal );
+		TraceRigidBodyVector( self, "collision", "point", collision.c.point );
+		TraceRigidBodyVector( self, "collision", "r", r );
+		TraceRigidBodyVector( self, "collision", "linearVelocity", linearVelocity );
+		TraceRigidBodyVector( self, "collision", "angularVelocity", angularVelocity );
+		TraceRigidBodyVector( self, "collision", "velocity", velocity );
+		TraceRigidBodyVector( self, "collision", "impulseTerms", idVec3( vel, impulseNumerator, impulseDenominator ) );
+		TraceRigidBodyVector( self, "collision", "impulse", impulse );
+		TraceRigidBodyVector( self, "collision", "inertia0", inverseWorldInertiaTensor[0] );
+		TraceRigidBodyVector( self, "collision", "inertia1", inverseWorldInertiaTensor[1] );
+		TraceRigidBodyVector( self, "collision", "inertia2", inverseWorldInertiaTensor[2] );
+	}
 
 	// update linear and angular momentum with impulse
 	current.i.linearMomentum += impulse;
@@ -892,9 +937,11 @@ bool idPhysics_RigidBody::Evaluate( int timeStepMSec, int endTimeMSec ) {
 	clipModel->Unlink();
 
 	next = current;
+	TraceRigidBodyState( self, "begin", current );
 
 	// calculate next position and orientation
 	Integrate( timeStep, next );
+	TraceRigidBodyState( self, "integrated", next );
 
 #ifdef RB_TIMINGS
 	timer_collision.Start();
@@ -909,6 +956,7 @@ bool idPhysics_RigidBody::Evaluate( int timeStepMSec, int endTimeMSec ) {
 
 	// set the new state
 	current = next;
+	TraceRigidBodyState( self, "motion", current );
 
 	if ( collided ) {
 		// apply collision impulse
@@ -916,6 +964,7 @@ bool idPhysics_RigidBody::Evaluate( int timeStepMSec, int endTimeMSec ) {
 			current.atRest = gameLocal.time;
 		}
 	}
+	TraceRigidBodyState( self, "impulse", current );
 
 	// update the position of the clip model
 	clipModel->Link( gameLocal.clip, self, clipModel->GetId(), current.i.position, current.i.orientation );
@@ -946,6 +995,7 @@ bool idPhysics_RigidBody::Evaluate( int timeStepMSec, int endTimeMSec ) {
 	}
 
 	if ( current.atRest < 0 ) {
+		TraceRigidBodyState( self, "contacts", current );
 		ActivateContactEntities();
 	}
 
@@ -1237,6 +1287,13 @@ idPhysics_RigidBody::SetAngularVelocity
 */
 void idPhysics_RigidBody::SetAngularVelocity( const idVec3 &newAngularVelocity, int id ) {
 	current.i.angularMomentum = newAngularVelocity * inertiaTensor;
+	if ( TraceRigidBodyEnabled( self ) ) {
+		TraceRigidBodyVector( self, "angular_set", "velocity", newAngularVelocity );
+		TraceRigidBodyVector( self, "angular_set", "inertia0", inertiaTensor[0] );
+		TraceRigidBodyVector( self, "angular_set", "inertia1", inertiaTensor[1] );
+		TraceRigidBodyVector( self, "angular_set", "inertia2", inertiaTensor[2] );
+		TraceRigidBodyVector( self, "angular_set", "momentum", current.i.angularMomentum );
+	}
 	Activate();
 }
 

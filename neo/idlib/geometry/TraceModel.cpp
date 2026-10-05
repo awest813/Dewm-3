@@ -573,8 +573,10 @@ void idTraceModel::SetupCylinder( const idBounds &cylBounds, const int numSides 
 	for ( i = 0; i < n; i++ ) {
 		// verts
 		angle = idMath::TWO_PI * i / n;
-		verts[i].x = cos( angle ) * halfSize.x + offset.x;
-		verts[i].y = sin( angle ) * halfSize.y + offset.y;
+		// Preserve native double trig results through scaling/translation.
+		// Early float rounding changes mass properties and projectile bounces.
+		verts[i].x = cos( static_cast<double>( angle ) ) * halfSize.x + offset.x;
+		verts[i].y = sin( static_cast<double>( angle ) ) * halfSize.y + offset.y;
 		verts[i].z = -halfSize.z + offset.z;
 		verts[n+i].x = verts[i].x;
 		verts[n+i].y = verts[i].y;
@@ -687,8 +689,8 @@ void idTraceModel::SetupCone( const idBounds &coneBounds, const int numSides ) {
 	for ( i = 0; i < n; i++ ) {
 		// verts
 		angle = idMath::TWO_PI * i / n;
-		verts[i].x = cos( angle ) * halfSize.x + offset.x;
-		verts[i].y = sin( angle ) * halfSize.y + offset.y;
+		verts[i].x = cos( static_cast<double>( angle ) ) * halfSize.x + offset.x;
+		verts[i].y = sin( static_cast<double>( angle ) ) * halfSize.y + offset.y;
 		verts[i].z = -halfSize.z + offset.z;
 		// edges
 		ii = i + 1;

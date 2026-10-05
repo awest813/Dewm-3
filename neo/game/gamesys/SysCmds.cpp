@@ -38,6 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "anim/Anim_Testmodel.h"
 #include "Entity.h"
 #include "Moveable.h"
+#include "Projectile.h"
 #include "WorldSpawn.h"
 #include "Fx.h"
 #include "Misc.h"
@@ -775,6 +776,31 @@ static void Cmd_TestUsercmd_f( const idCmdArgs &args ) {
 		weapon ? weapon->scriptObject.GetTypeName() : "none",
 		player->viewAngles.pitch, player->viewAngles.yaw, player->viewAngles.roll,
 		(int)player->noclip);
+	// Read-only snapshots of player-owned projectiles make weapon replay
+	// comparisons cover real flight/impact behavior as well as ammunition.
+	int projectileCount = 0;
+	for ( int i = 0; i < gameLocal.num_entities; ++i ) {
+		idEntity *entity = gameLocal.entities[i];
+		if ( entity && entity->IsType( idProjectile::Type ) &&
+			static_cast<idProjectile *>( entity )->GetOwner() == player ) {
+			++projectileCount;
+		}
+	}
+	gameLocal.Printf( "PROJECTILE_CHECK frame=%d time=%d count=%d\n",
+		gameLocal.framenum, gameLocal.time, projectileCount );
+	for ( int i = 0; i < gameLocal.num_entities; ++i ) {
+		idEntity *entity = gameLocal.entities[i];
+		if ( !entity || !entity->IsType( idProjectile::Type ) ||
+			static_cast<idProjectile *>( entity )->GetOwner() != player ) {
+			continue;
+		}
+		const idVec3 &projectileOrigin = entity->GetPhysics()->GetOrigin();
+		const idVec3 &projectileVelocity = entity->GetPhysics()->GetLinearVelocity();
+		gameLocal.Printf( "PROJECTILE_ITEM index=%d def=%s hidden=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f\n",
+			i, entity->GetEntityDefName(), (int)entity->IsHidden(),
+			projectileOrigin.x, projectileOrigin.y, projectileOrigin.z,
+			projectileVelocity.x, projectileVelocity.y, projectileVelocity.z );
+	}
 }
 
 /*

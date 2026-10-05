@@ -69,6 +69,9 @@ def compare(native, web, tolerance=0.001, scenario='movement'):
     if scenario == 'save-weapons':
         validate_save_weapons(native, tolerance)
         return len(native)
+    if scenario == 'explosive-weapons':
+        validate_explosive_weapons(native)
+        return len(native)
     if len({row['origin'] for row in native}) < 4:
         raise ValueError('sequence did not exercise enough distinct physical positions')
     if not any(row['ground'] == 0 for row in native) or not any(row['crouch'] for row in native):
@@ -77,6 +80,32 @@ def compare(native, web, tolerance=0.001, scenario='movement'):
     if not clips or len(set(clips)) < 2 or clips[-1] <= min(clips):
         raise ValueError('sequence did not exercise ammunition consumption and reload')
     return len(native)
+
+
+def validate_explosive_weapons(rows):
+    groups = {
+        'grenade': ('weapon_handgrenade', ('selected', 'hold', 'release', 'flight', 'flight2', 'end', 'removed')),
+        'rocket': ('weapon_rocketlauncher', ('selected', 'fire', 'flight', 'recovery', 'reload')),
+        'bfg': ('weapon_bfg', ('selected', 'charge', 'release', 'flight', 'recovery', 'reload', 'removed')),
+        'chainsaw': ('weapon_chainsaw', ('selected', 'attack', 'recovery')),
+    }
+    expected = [f'{name}_{phase}' for name, (_, phases) in groups.items() for phase in phases]
+    if [row.get('phase') for row in rows] != expected:
+        raise ValueError('explosive/melee scenario is incomplete or out of order')
+    for name, (weapon, phases) in groups.items():
+        group = [row for row in rows if row['phase'].startswith(name + '_')]
+        if any(row.get('weapon') != weapon or row['health'] <= 0 for row in group):
+            raise ValueError(f'{name}: wrong weapon or player died before coverage completed')
+        if name == 'chainsaw':
+            if not group[-1]['ready']:
+                raise ValueError('chainsaw: attack did not recover')
+            continue
+        if min(row['ammo'] for row in group[1:]) >= group[0]['ammo']:
+            raise ValueError(f'{name}: firing did not consume ammunition')
+        if name in ('rocket', 'bfg'):
+            reloaded = next(row for row in group if row['phase'] == name + '_reload')
+            if reloaded['clip'] <= min(row['clip'] for row in group[1:]) or not reloaded['ready']:
+                raise ValueError(f'{name}: reload did not complete')
 
 
 def validate_save_weapons(rows, tolerance):
@@ -115,7 +144,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('native_log')
     parser.add_argument('web_log')
-    parser.add_argument('--scenario', choices=('movement', 'save-weapons'), default='movement')
+    parser.add_argument('--scenario', choices=('movement', 'save-weapons', 'explosive-weapons'), default='movement')
     args = parser.parse_args()
     count = compare(checkpoints(args.native_log), checkpoints(args.web_log), scenario=args.scenario)
     print(f'PASS: {count} native/web simulation checkpoints (position/velocity tolerance 0.001 units)')

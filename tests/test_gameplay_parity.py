@@ -130,6 +130,43 @@ class ParityChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'fields differ'):
             compare(self.rows, web)
 
+    def explosive_rows(self):
+        groups = [('grenade', 'weapon_handgrenade', ('selected', 'hold', 'release', 'flight', 'flight2', 'end', 'removed')),
+                  ('rocket', 'weapon_rocketlauncher', ('selected', 'fire', 'flight', 'recovery', 'reload')),
+                  ('bfg', 'weapon_bfg', ('selected', 'charge', 'release', 'flight', 'recovery', 'reload', 'removed')),
+                  ('chainsaw', 'weapon_chainsaw', ('selected', 'attack', 'recovery'))]
+        rows = []
+        for name, weapon, phases in groups:
+            for phase in phases:
+                selected = phase == 'selected'
+                rows.append(dict(self.rows[0], phase=name + '_' + phase, weapon=weapon,
+                                 ammo=80 if selected else 79,
+                                 clip=8 if selected or phase in ('reload', 'removed') else 7))
+        return rows
+
+    def test_explosive_weapon_coverage(self):
+        rows = self.explosive_rows()
+        self.assertEqual(compare(rows, rows, scenario='explosive-weapons'), 22)
+
+    def test_explosive_missing_coverage_or_ammo(self):
+        rows = self.explosive_rows()
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            compare(rows[:-1], rows[:-1], scenario='explosive-weapons')
+        for row in rows:
+            row['ammo'] = 80
+        with self.assertRaisesRegex(ValueError, 'ammunition'):
+            compare(rows, rows, scenario='explosive-weapons')
+
+    def test_explosive_death_or_reload(self):
+        rows = self.explosive_rows()
+        rows[0]['health'] = 0
+        with self.assertRaisesRegex(ValueError, 'died'):
+            compare(rows, rows, scenario='explosive-weapons')
+        rows = self.explosive_rows()
+        next(row for row in rows if row['phase'] == 'rocket_reload')['clip'] = 7
+        with self.assertRaisesRegex(ValueError, 'reload'):
+            compare(rows, rows, scenario='explosive-weapons')
+
 
 if __name__ == '__main__':
     unittest.main()

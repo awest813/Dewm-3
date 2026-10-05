@@ -63,6 +63,8 @@ const int NUM_RENDER_PORTAL_BITS	= idMath::BitsForInteger( PS_BLOCK_ALL );
 // by default; never advance or reset the generator to make captures agree.
 static idCVar g_debugRandomSeed( "g_debugRandomSeed", "0", CVAR_GAME | CVAR_BOOL | CVAR_CHEAT,
 	"trace random seeds during map spawning and simulation ticks" );
+static idCVar g_debugRandomEntityFrame( "g_debugRandomEntityFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"additional simulation frame for per-entity random tracing; -1 disables" );
 
 static void TraceRandomSeed( const char *phase, int index ) {
 	if ( g_debugRandomSeed.GetBool() ) {
@@ -2337,7 +2339,8 @@ gameReturn_t idGameLocal::RunFrame( const usercmd_t *clientCmds ) {
 				timer_singlethink.Start();
 				const int seedBeforeThink = random.GetSeed();
 				ent->Think();
-				if ( g_debugRandomSeed.GetBool() && framenum <= 4 && random.GetSeed() != seedBeforeThink ) {
+				if ( g_debugRandomSeed.GetBool() &&
+					( framenum <= 4 || framenum == g_debugRandomEntityFrame.GetInteger() ) && random.GetSeed() != seedBeforeThink ) {
 					TraceRandomSeed( "think_entity", ent->entityNumber );
 					Printf( "RANDOM_ENTITY index=%d name=%s type=%s\n",
 						ent->entityNumber, ent->name.c_str(), ent->GetClassname() );
@@ -2479,8 +2482,10 @@ void idGameLocal::CalcFov( float base_fov, float &fov_x, float &fov_y ) const {
 	float	ratio_y;
 
 	// first, calculate the vertical fov based on a 640x480 view
-	x = 640.0f / tan( base_fov / 360.0f * idMath::PI );
-	y = atan2( 480.0f, x );
+	// Match native double transcendental results before the existing float
+	// assignments; C++ math.h float overloads otherwise change the projection.
+	x = 640.0f / tan( static_cast<double>( base_fov / 360.0f * idMath::PI ) );
+	y = atan2( 480.0, static_cast<double>( x ) );
 	fov_y = y * 360.0f / idMath::PI;
 
 	// FIXME: somehow, this is happening occasionally
@@ -2522,13 +2527,13 @@ void idGameLocal::CalcFov( float base_fov, float &fov_x, float &fov_y ) const {
 		break;
 	}
 
-	y = ratio_y / tan( fov_y / 360.0f * idMath::PI );
-	fov_x = atan2( ratio_x, y ) * 360.0f / idMath::PI;
+	y = ratio_y / tan( static_cast<double>( fov_y / 360.0f * idMath::PI ) );
+	fov_x = atan2( static_cast<double>( ratio_x ), static_cast<double>( y ) ) * 360.0f / idMath::PI;
 
 	if ( fov_x < base_fov ) {
 		fov_x = base_fov;
-		x = ratio_x / tan( fov_x / 360.0f * idMath::PI );
-		fov_y = atan2( ratio_y, x ) * 360.0f / idMath::PI;
+		x = ratio_x / tan( static_cast<double>( fov_x / 360.0f * idMath::PI ) );
+		fov_y = atan2( static_cast<double>( ratio_y ), static_cast<double>( x ) ) * 360.0f / idMath::PI;
 	}
 
 	// FIXME: somehow, this is happening occasionally
