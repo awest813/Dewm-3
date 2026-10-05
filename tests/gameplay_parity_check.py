@@ -72,6 +72,38 @@ def compare(native, web, tolerance=0.001, scenario='movement'):
     if scenario == 'explosive-weapons':
         validate_explosive_weapons(native)
         return len(native)
+    if scenario == 'melee-hit':
+        expected = ('chainsaw_selected', 'target_spawned', 'chainsaw_first_hit',
+                    'chainsaw_followup', 'chainsaw_kill', 'chainsaw_recovery')
+        if tuple(row.get('phase') for row in native) != expected:
+            raise ValueError('melee-hit scenario is incomplete or out of order')
+        if any(row.get('weapon') != 'weapon_chainsaw' or row['health'] <= 0 for row in native):
+            raise ValueError('melee-hit: wrong weapon or player died')
+        if not native[-1]['ready']:
+            raise ValueError('melee-hit: weapon did not recover')
+        return len(native)
+    if scenario == 'bfg-damage':
+        expected = ('bfg_selected', 'bfg_targets', 'bfg_charge', 'bfg_release',
+                    'bfg_earlyimpact', 'bfg_impact', 'bfg_settled')
+        if tuple(row.get('phase') for row in native) != expected:
+            raise ValueError('BFG damage scenario is incomplete or out of order')
+        if any(row.get('weapon') != 'weapon_bfg' or row['health'] <= 0 for row in native):
+            raise ValueError('BFG damage: wrong weapon or player died')
+        if native[3]['ammo'] >= native[2]['ammo'] or native[4]['health'] >= native[3]['health']:
+            raise ValueError('BFG did not consume ammo and exercise player splash damage')
+        if not native[-1]['ready']:
+            raise ValueError('BFG did not recover')
+        return len(native)
+    if scenario == 'bfg-beam':
+        expected = ('beam_selected', 'beam_settle', 'beam_target', 'beam_charge', 'beam_release',
+                    'beam_before_damage', 'beam_damage1', 'beam_damage2', 'beam_impact', 'beam_ragdoll', 'beam_recovery', 'beam_removed')
+        if tuple(row.get('phase') for row in native) != expected:
+            raise ValueError('periodic beam scenario is incomplete or out of order')
+        if any(row.get('weapon') != 'weapon_bfg' or row['health'] <= 0 for row in native):
+            raise ValueError('periodic beam: wrong weapon or player died')
+        if native[4]['ammo'] >= native[3]['ammo'] or not native[-1]['ready']:
+            raise ValueError('periodic beam: ammunition/recovery was not exercised')
+        return len(native)
     if len({row['origin'] for row in native}) < 4:
         raise ValueError('sequence did not exercise enough distinct physical positions')
     if not any(row['ground'] == 0 for row in native) or not any(row['crouch'] for row in native):
@@ -144,7 +176,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('native_log')
     parser.add_argument('web_log')
-    parser.add_argument('--scenario', choices=('movement', 'save-weapons', 'explosive-weapons'), default='movement')
+    parser.add_argument('--scenario', choices=('movement', 'save-weapons', 'explosive-weapons', 'melee-hit', 'bfg-damage', 'bfg-beam'), default='movement')
     args = parser.parse_args()
     count = compare(checkpoints(args.native_log), checkpoints(args.web_log), scenario=args.scenario)
     print(f'PASS: {count} native/web simulation checkpoints (position/velocity tolerance 0.001 units)')

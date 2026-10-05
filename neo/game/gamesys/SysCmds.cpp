@@ -717,6 +717,57 @@ void Cmd_SetViewpos_f( const idCmdArgs &args ) {
 	player->Teleport( origin, angles, NULL );
 }
 
+// Read-only engine collision probes for choosing supported audit positions.
+// A point trace does not establish clearance for a projectile's full volume.
+static void Cmd_TestTrace_f( const idCmdArgs &args ) {
+	if ( !gameLocal.GetLocalPlayer() || !gameLocal.CheatsOk() || gameLocal.isMultiplayer ) return;
+	if ( args.Argc() != 8 || ( idStr::Cmp( args.Argv( 1 ), "solid" ) && idStr::Cmp( args.Argv( 1 ), "shot" ) ) ) {
+		gameLocal.Printf( "usage: testTrace <solid|shot> <start x y z> <end x y z>\n" );
+		return;
+	}
+	idVec3 start, end;
+	for ( int i = 0; i < 6; ++i ) {
+		char *tail;
+		double value = strtod( args.Argv( i + 2 ), &tail );
+		// Range comparisons also reject nonfinite values before tracing.
+		if ( !*args.Argv( i + 2 ) || *tail || !( value >= -32768.0 && value <= 32768.0 ) ) {
+			gameLocal.Printf( "testTrace: invalid coordinate %d\n", i + 1 );
+			return;
+		}
+		( i < 3 ? start[i] : end[i - 3] ) = (float)value;
+	}
+	trace_t trace = {};
+	const int mask = idStr::Cmp( args.Argv( 1 ), "solid" ) == 0 ? MASK_SOLID : MASK_SHOT_RENDERMODEL;
+	gameLocal.clip.TracePoint( trace, start, end, mask, gameLocal.GetLocalPlayer() );
+	idEntity *hit = trace.fraction < 1.0f ? gameLocal.GetTraceEntity( trace ) : NULL;
+	const idVec3 normal = trace.fraction < 1.0f ? trace.c.normal : vec3_origin;
+	gameLocal.Printf( "TRACE_CHECK mask=%s fraction=%.9g point=%.6f,%.6f,%.6f normal=%.6f,%.6f,%.6f entity=%d name=%s\n",
+		args.Argv( 1 ), trace.fraction, trace.endpos.x, trace.endpos.y, trace.endpos.z,
+		normal.x, normal.y, normal.z, hit ? hit->entityNumber : -1, hit ? hit->name.c_str() : "none" );
+}
+
+// Read-only target snapshots for hit/damage/death comparisons. A missing entity
+// is reported explicitly, rather than silently omitting evidence after removal.
+static void Cmd_TestEntityState_f( const idCmdArgs &args ) {
+	if ( !gameLocal.GetLocalPlayer() || !gameLocal.CheatsOk() || gameLocal.isMultiplayer ) return;
+	if ( args.Argc() != 2 ) {
+		gameLocal.Printf( "usage: testEntityState <entity name>\n" );
+		return;
+	}
+	idEntity *entity = gameLocal.FindEntity( args.Argv( 1 ) );
+	if ( !entity ) {
+		gameLocal.Printf( "ENTITY_CHECK name=%s present=0 frame=%d time=%d\n",
+			args.Argv( 1 ), gameLocal.framenum, gameLocal.time );
+		return;
+	}
+	const idVec3 &origin = entity->GetPhysics()->GetOrigin();
+	const idVec3 &velocity = entity->GetPhysics()->GetLinearVelocity();
+	gameLocal.Printf( "ENTITY_CHECK name=%s present=1 frame=%d time=%d def=%s health=%d hidden=%d damageable=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f\n",
+		entity->name.c_str(), gameLocal.framenum, gameLocal.time, entity->GetEntityDefName(), entity->health,
+		(int)entity->IsHidden(), (int)entity->fl.takedamage,
+		origin.x, origin.y, origin.z, velocity.x, velocity.y, velocity.z );
+}
+
 // Developer-only, bounded input replay for comparing the real simulation on
 // different platforms. It advances the loaded world; reload the test save/map
 // afterward. It deliberately does not bypass cinematics or change physics cvars.
@@ -2420,6 +2471,8 @@ void idGameLocal::InitConsoleCommands( void ) {
 	cmdSystem->AddCommand( "where",					Cmd_GetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "testUsercmd", Cmd_TestUsercmd_f, CMD_FL_GAME|CMD_FL_CHEAT, "advances up to 300 simulation ticks with fixed input and reports movement/ammo; use a disposable map or reload afterward" );
+	cmdSystem->AddCommand( "testEntityState", Cmd_TestEntityState_f, CMD_FL_GAME|CMD_FL_CHEAT, "reports named entity health and physics without changing the simulation", idGameLocal::ArgCompletion_EntityName );
+	cmdSystem->AddCommand( "testTrace", Cmd_TestTrace_f, CMD_FL_GAME|CMD_FL_CHEAT, "read-only point collision probe for floor and shot-path audits; excludes the local player" );
 	cmdSystem->AddCommand( "setviewpos",			Cmd_SetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"sets the current view position" );
 	cmdSystem->AddCommand( "teleport",				Cmd_Teleport_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"teleports the player to an entity location", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "trigger",				Cmd_Trigger_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"triggers an entity", idGameLocal::ArgCompletion_EntityName );

@@ -22,6 +22,11 @@ on:
       - 'tests/web_fov_check.py'
       - 'tests/fov_native.txt'
       - 'tests/explosive_weapon_parity.cfg'
+      - 'tests/melee_hit_parity.cfg'
+      - 'tests/bfg_damage_parity.cfg'
+      - 'tests/bfg_beam_parity.cfg'
+      - 'tests/entity_parity_check.py'
+      - 'tests/test_entity_parity.py'
       - 'tests/projectile_parity_check.py'
       - 'tests/test_projectile_parity.py'
       - 'tests/rigid_body_trace_check.py'
@@ -55,6 +60,11 @@ on:
       - 'tests/web_fov_check.py'
       - 'tests/fov_native.txt'
       - 'tests/explosive_weapon_parity.cfg'
+      - 'tests/melee_hit_parity.cfg'
+      - 'tests/bfg_damage_parity.cfg'
+      - 'tests/bfg_beam_parity.cfg'
+      - 'tests/entity_parity_check.py'
+      - 'tests/test_entity_parity.py'
       - 'tests/projectile_parity_check.py'
       - 'tests/test_projectile_parity.py'
       - 'tests/rigid_body_trace_check.py'
@@ -98,6 +108,9 @@ jobs:
           grep -q 'IDBFS' web/shell.html
           grep -q 'fs_basepath' web/shell.html
           grep -q 'WEB_PRELOAD_DIR' neo/CMakeLists.txt
+
+      - name: Check target snapshot verifier
+        run: python3 -m unittest discover -s tests -p test_entity_parity.py
 
       - name: Syntax-check scripts
         run: |

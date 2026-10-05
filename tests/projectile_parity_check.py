@@ -59,7 +59,7 @@ def snapshots(path):
     return rows
 
 
-def compare_projectiles(native, web, tolerance=0.001):
+def compare_projectiles(native, web, tolerance=0.001, scenario='explosive-weapons'):
     if not native or len(native) != len(web):
         raise ValueError('projectile checkpoint count differs or is empty')
     for left, right in zip(native, web):
@@ -74,6 +74,19 @@ def compare_projectiles(native, web, tolerance=0.001):
                 delta = max(abs(x-y) for x, y in zip(a[field], b[field]))
                 if delta > tolerance:
                     raise ValueError(f'{left["phase"]}: projectile {field} differs by {delta}')
+    if scenario == 'bfg-beam':
+        phases = {row['phase']: row for row in native}
+        for phase in ('beam_release', 'beam_before_damage', 'beam_damage1', 'beam_damage2'):
+            row = phases.get(phase)
+            if not row or row['count'] != 1 or row['items'][0]['definition'] != 'projectile_bfg' or row['items'][0]['hidden'] or max(map(abs, row['items'][0]['velocity'])) < 300:
+                raise ValueError('periodic beam damage was not sampled during actual BFG flight')
+        impact = phases.get('beam_impact')
+        if not impact or impact['count'] != 1 or impact['items'][0]['velocity'] != (0, 0, 0):
+            raise ValueError('BFG impact was not observed after periodic beam pulses')
+        removed = phases.get('beam_removed')
+        if not removed or removed['count']:
+            raise ValueError('BFG projectile cleanup was not observed')
+        return len(native)
     for name in ('grenade', 'rocket', 'bfg'):
         group = [row for row in native if row['phase'].startswith(name + '_')]
         moving = [item for row in group for item in row['items']

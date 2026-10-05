@@ -62,6 +62,8 @@
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
   .toolbar label { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 8px; }
   .play-status { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+  #mouse-browser-help { margin: 0 0 16px; }
+  #mouse-game-link { flex: 1 1 240px; }
   #graphics, #controls-help { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0 20px; margin-top: 12px; }
   #graphics-controls { border: 0; padding: 0 0 16px; margin: 0; min-width: 0; }
   .graphics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; margin: 16px 0; }
@@ -156,6 +158,15 @@
       <img id="screenshot-image" alt="Last captured Doom 3 screenshot">
       <button id="screenshot-copy" type="button" hidden disabled>Copy image</button>
     </details>
+    <details id="mouse-browser-help" hidden>
+      <summary>Try another browser</summary>
+      <p class="muted">Mouse capture could not be enabled here. You can try this address in another browser. Choose your game files again there; each browser has its own saves.</p>
+      <div class="toolbar">
+        <input id="mouse-game-link" type="text" aria-label="Game address" readonly>
+        <button id="mouse-copy-link" type="button">Copy game link</button>
+      </div>
+      <p id="mouse-copy-status" class="muted" role="status"></p>
+    </details>
     <details id="graphics">
       <summary>Graphics options</summary>
       <p class="muted">Press <kbd>Esc</kbd> to open the game menu before adjusting settings. Apply changes to see them in game.</p>
@@ -219,11 +230,15 @@
   var started = false;
   var savesReady = false;
   var wantsMouse = false, dragLooking = false, captureFailed = false;
+  var captureDocumentRejected = false;
   var dragX = 0, dragY = 0;
   var capturePending = false, captureTimer = null, lastCaptureAttempt = -Infinity;
   var captureFromGesture = false;
   function mouseLocked() { return document.pointerLockElement === canvas; }
   function updateMouseStatus() {
+    var browserHelp = document.getElementById('mouse-browser-help');
+    browserHelp.hidden = !started || !wantsMouse || mouseLocked() || !captureDocumentRejected;
+    if (!browserHelp.hidden) document.getElementById('mouse-game-link').value = location.href;
     document.getElementById('mouse-status').textContent = mouseLocked() ? 'Mouse captured.' :
       (captureFailed && wantsMouse ?
         'Mouse capture unavailable. Hold the right mouse button to look; click the game to retry.' :
@@ -242,6 +257,7 @@
     capturePending = false;
     clearTimeout(captureTimer);
     captureFailed = true;
+    if (error) captureDocumentRejected = error.name === 'WrongDocumentError' && /root document/i.test(error.message || '');
     canvas.style.cursor = 'default';
     updateMouseStatus();
     if (error) log('Mouse capture: ' + (error.name || 'error') + ': ' + (error.message || error), true);
@@ -280,6 +296,25 @@
   document.getElementById('enable-audio').addEventListener('click', resumeAudio);
   document.getElementById('retry').addEventListener('click', function () { location.reload(); });
   document.getElementById('focus-game').addEventListener('click', focusGame);
+  document.getElementById('mouse-copy-link').addEventListener('click', async function () {
+    var button = document.getElementById('mouse-copy-link');
+    var link = document.getElementById('mouse-game-link');
+    var status = document.getElementById('mouse-copy-status');
+    if (button.disabled) return;
+    button.disabled = true;
+    link.value = location.href;
+    status.textContent = 'Copying game link…';
+    try {
+      if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function')
+        throw new Error('Text clipboard unavailable');
+      await navigator.clipboard.writeText(link.value);
+      status.textContent = 'Link copied. Paste it into your browser.';
+    } catch (error) {
+      link.focus();
+      if (typeof link.select === 'function') link.select();
+      status.textContent = 'Select the address above and copy it.';
+    } finally { button.disabled = false; }
+  });
   document.getElementById('screenshot').addEventListener('click', function () {
     var button = document.getElementById('screenshot');
     if (!runtimeReady || !started || button.disabled) return;
@@ -870,7 +905,7 @@
     if (runtimeReady && started) {
       Module.ccall('Web_SetMouseCaptured', null, ['number'], [mouseLocked() ? 1 : 0]);
     }
-    if (mouseLocked()) captureFailed = false;
+    if (mouseLocked()) captureFailed = captureDocumentRejected = false;
     updateMouseStatus();
   });
   document.addEventListener('pointerlockerror', function () { captureFailure(); });

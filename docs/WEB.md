@@ -1335,6 +1335,141 @@ rocket and frame-214 failures recorded above. These fixtures do not establish
 full campaign fidelity, BFG targeting, melee hit/death behavior, or sustained
 60 FPS; those still require separate verification.
 
+### Chainsaw hit and target death audit (2026-10-05)
+
+`testEntityState <name>` is a cheat-only, single-player, read-only snapshot of
+named entity presence, health, damageability, origin, velocity and game clock.
+It does not advance time, change targets or consume random values. Missing
+entities are reported explicitly. `tests/melee_hit_parity.cfg` exercises a
+stock maintenance zombie with actual chainsaw attacks, followed by recovery
+and ragdoll settling. `notarget` isolates weapon damage; enemy pursuit and
+attacks are outside this fixture's scope. No licensed assets are included.
+
+The initial comparison failed: player timing matched but the browser ragdoll
+moved differently and received an extra hit. Random traces located the first
+seed difference at frame 32, before any damage. Browser `ui_showGun` was 0 from
+the preceding scene fixture; native was 1. View-model chainsaw smoke consumes
+the game random stream only when visible. The fixture now explicitly sets
+`ui_showGun 1` and `g_showHud 1` on both platforms, instead of depending on saved
+settings. No engine random calls or damage rules were changed to hide the
+failed comparison.
+
+With matching settings, all six player/weapon/timing checkpoints, all five
+target damage/death and ragdoll snapshots, and all five clock/frame/seed
+checkpoints pass. Every serialized target value also matches exactly, without
+the usual 0.001-unit tolerance. The zombie starts at 50 health, reaches zero
+after the first attack window, and settles at -100 after subsequent hits.
+Evidence: ignored `build-windows/melee-hit-native/full-console.txt` and
+`build-web/melee-matched-settings-console.txt`. The negative comparison remains
+in `build-web/melee-hit-console.txt`; bounded follow-up traces are in
+`build-windows/melee-trace-native/full-console.txt` and
+`build-web/melee-trace-console.txt`.
+
+Both full builds pass. All 48 Python regressions pass, including four verifier
+checks that reject missing target records, unchanged health, mismatched damage
+and ragdoll drift. Fresh browser checks after the sound-clock correction also
+preserve 17 movement checkpoints, 596 scene random-state records and three
+scene clock/frame checkpoints against their native baselines. Evidence:
+ignored `build-web/sound-clock-{movement,heat}-console.txt` and
+`build-windows/shape-fixed-{gameplay,heat}-native/full-console.txt`.
+BFG enemy targeting, player death, full combat encounters, campaign coverage,
+physical pointer capture and sustained 60 FPS remain unverified.
+
+### Charged BFG damage and occlusion audit (2026-10-05)
+
+`tests/bfg_damage_parity.cfg` exercises a charged stock BFG shot in a disposable
+Mars City 2 scene, with two exposed stock maintenance zombies and a third
+behind the railing. Actual physical collisions, stock damage definitions,
+player splash damage, gib/removal events and game random calls remain enabled.
+`notarget` isolates damage from enemy pursuit. Gun display settings are explicit
+on both platforms, as in the chainsaw fixture. No licensed assets are included.
+
+Initial target placements failed to exercise the intended coverage: the shot
+hit the railing without damaging targets, and a subsequent lateral placement
+left the second zombie outside the walkable platform. Those runs are not treated
+as successful damage/targeting evidence. The accepted setup puts both exposed
+zombies on the platform while retaining the blocked control.
+
+Native and web now match all seven player/weapon/ammo/timing checkpoints, all
+18 target snapshots, and all six recorded game/render clock/frame/seed
+checkpoints. Every serialized target value also matches exactly with zero
+comparison tolerance. Exposed target health reaches -750 and -532; both are
+removed by the final checkpoint. The blocked target remains at 50 health.
+Player splash damage reduces health from 100 to 40 identically. Evidence:
+ignored `build-windows/bfg-damage-native/full-console.txt` and
+`build-web/bfg-damage-console.txt`. Earlier inadequate runs remain in the
+`bfg-target-native`, `bfg-visible-native`, `bfg-multi-native` and corresponding
+browser log artifacts for investigation.
+
+`entity_parity_check.py --scenario bfg-damage` validates target presence,
+removal timing, initial health, exposed-target death, blocked-target health,
+and target physics/clock parity. Missing entities have explicit presence
+records without invented health or position. Three new verifier tests reject
+blocked-target damage, unchanged exposed-target health and premature removal,
+and check missing-entity parsing. All 51 Python regressions pass. The existing
+chainsaw comparison still passes after adding removal support.
+
+This fixture establishes close-impact BFG direct/splash damage and the blocked
+control's preservation. It does not establish long-flight beam acquisition,
+periodic beam damage, moving-target tracking or all occlusion geometries.
+Those remain fidelity targets alongside player death, full combat encounters,
+campaign coverage, physical pointer capture and sustained 60 FPS.
+
+### Periodic BFG beam and cleanup audit (2026-10-05)
+
+`tests/bfg_beam_parity.cfg` retains the stock Mars City 2 map and door timing,
+advances 100 additional settling ticks before charging, and positions a stock
+maintenance zombie beside the flight path. Enemy pursuit is disabled with
+`notarget`; physics, weapon scripts, periodic damage and random calls are not
+bypassed. Rejected exploratory positions either collided immediately or lacked
+a supporting floor; those do not count as beam coverage. The accepted fixture
+contains no exploratory script calls or forced door commands.
+
+Both platforms observe target health 50 before periodic damage, then 40 and 30
+at two pre-impact snapshots while the BFG is still travelling at 350 units/sec.
+The second snapshot also records the target's pain-driven movement. Impact
+reduces health to -370; the ragdoll settles, and both target and projectile are
+removed by frame 828 (13248 ms), beyond the stock seven-second projectile removal
+delay. All 12 player/weapon/timing checkpoints, 12 projectile snapshots, 10
+target snapshots and 10 clock/frame/seed checkpoints match. Every serialized
+target value also matches with zero tolerance. Evidence: ignored
+`build-windows/bfg-periodic-cleanup-native/full-console.txt` and
+`build-web/bfg-periodic-cleanup-console.txt`.
+
+The verifier requires two nonfatal pulses before impact, continued actual
+projectile flight at both damage snapshots, impact, weapon recovery, settled
+ragdoll motion and final target/projectile removal. New negative tests reject
+missing second pulses, early impact, changed pulse timing, absent cleanup and
+stopped projectiles even when both supplied logs agree. All 54 Python
+regressions and six browser shell groups pass. Both full builds pass.
+
+`testTrace <solid|shot> <start x y z> <end x y z>` is a cheat-only, single-player,
+read-only collision probe using the engine's point trace and excluding the
+local player. It reports fraction, contact point/normal and entity identity;
+coordinates must be finite and within +/-32768. A point trace does not prove
+clearance for a projectile's full volume. Six native/browser floor, wall,
+door and clear-path probes match exactly, including a zero normal on a miss.
+Three invalid-coordinate cases and invalid argument count return the same
+errors on both platforms. Frozen game/render clock, frame and random seed remain
+unchanged before and after the probes. Evidence: ignored
+`build-windows/beam-probe-full-native/full-console.txt` and
+`build-web/beam-probe-full-console.txt`.
+
+This extends the preceding close-impact audit to single-target beam acquisition,
+two periodic pulses, pain-driven target movement and cleanup. Multi-target beam
+scheduling, acquisition/removal edge cases, changing occlusion and real combat
+pursuit remain unverified. Player death, broad campaign/material coverage,
+physical pointer capture and sustained 60 FPS still require evidence.
+
+Browser replay cleanup must also reset `in_nograb 0`; loading a save alone does
+not reset this non-archived engine test setting. The current restore confirms
+`in_nograb 0`, `com_fixedTic 0`, `g_stopTime 0`, a 60 FPS cap and a running
+WebAudio context. Focus game still reports mouse capture unavailable in the
+in-app browser, so successful physical capture remains unproven after correcting
+the test setting. The launcher presents its existing right-button fallback.
+Evidence: ignored `build-web/beam-restored-console.txt` and
+`C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/beam-audit-restored.jpg`.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,

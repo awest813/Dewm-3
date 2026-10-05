@@ -15,6 +15,7 @@ const windowListeners = new Map();
 let pointerRequests = 0, now = 1000, pendingTimer;
 const engineCalls = [];
 const context = {
+  location: { href: 'http://localhost:8080/dhewm3.html', search: '' },
   document: {
     body: { className: '', appendChild() {} },
     createElement(tag) { return { click() { context.download = { tag, href: this.href, filename: this.download }; }, remove() { context.linkRemoved = true; } }; },
@@ -144,6 +145,21 @@ assert.equal(swallowed, false, 'captured gameplay motion reaches SDL');
 context.document.pointerLockElement = null;
 documentListeners.get('pointerlockchange')();
 assert.equal(engineCalls.at(-1)[3][0], 0);
+context.captureFailure({ name: 'WrongDocumentError', message: 'The root document of this element is not valid for pointer lock.' });
+assert.equal(elements.get('mouse-browser-help').hidden, false, 'document rejection offers a browser recovery path');
+assert.equal(elements.get('mouse-game-link').value, context.location.href);
+context.captureFailure();
+assert.equal(elements.get('mouse-browser-help').hidden, false, 'generic error events do not erase a detailed rejection');
+context.Module.onMouseModeChange(false);
+assert.equal(elements.get('mouse-browser-help').hidden, true, 'menus do not show gameplay capture recovery');
+context.Module.onMouseModeChange(true);
+context.document.pointerLockElement = context.canvas;
+documentListeners.get('pointerlockchange')();
+assert.equal(elements.get('mouse-browser-help').hidden, true, 'successful capture removes recovery guidance');
+assert.equal(context.captureDocumentRejected, false);
+context.document.pointerLockElement = null;
+context.captureFailure({ name: 'NotAllowedError', message: 'User gesture required' });
+assert.equal(elements.get('mouse-browser-help').hidden, true, 'transient gesture failures retain the existing retry flow');
 context.started = false;
 console.log('Web mouse capture and drag-look regression tests passed.');
 
@@ -488,4 +504,31 @@ async function checkScreenshotCopy() {
   assert.equal(elements.get('screenshot-copy').hidden, true, 'browsers without PNG clipboard support keep preview and download');
   console.log('Web screenshot copy regressions passed.');
 }
-checkScreenshotCopy().then(checkFolderRecovery).catch(error => { console.error(error); process.exitCode = 1; });
+async function checkMouseLinkCopy() {
+  context.location = { href: 'http://localhost:8080/dhewm3.html', search: '' };
+  const button = elements.get('mouse-copy-link');
+  context.navigator = {};
+  await elementListeners.get('mouse-copy-link:click')();
+  assert.match(elements.get('mouse-copy-status').textContent, /Select the address/);
+  assert.equal(context.focusedElement, 'mouse-game-link', 'unsupported clipboard leaves a selectable URL');
+  let finish, writes = 0;
+  context.navigator.clipboard = { writeText(value) {
+    assert.equal(value, context.location.href, 'copy exports only the game address');
+    ++writes;
+    return new Promise(resolve => { finish = resolve; });
+  } };
+  const pending = elementListeners.get('mouse-copy-link:click')();
+  assert.equal(button.disabled, true);
+  await elementListeners.get('mouse-copy-link:click')();
+  assert.equal(writes, 1, 'pending copies cannot overlap');
+  finish();
+  await pending;
+  assert.match(elements.get('mouse-copy-status').textContent, /Link copied/);
+  assert.equal(button.disabled, false);
+  context.navigator.clipboard.writeText = async () => { throw Error('permission denied'); };
+  await elementListeners.get('mouse-copy-link:click')();
+  assert.match(elements.get('mouse-copy-status').textContent, /Select the address/);
+  assert.equal(button.disabled, false, 'clipboard rejection permits retry and manual copy');
+  console.log('Web mouse-link recovery regressions passed.');
+}
+checkMouseLinkCopy().then(checkScreenshotCopy).then(checkFolderRecovery).catch(error => { console.error(error); process.exitCode = 1; });

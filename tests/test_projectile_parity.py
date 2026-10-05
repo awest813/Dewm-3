@@ -8,6 +8,23 @@ from projectile_parity_check import snapshots, compare_projectiles
 
 
 class ProjectileParity(unittest.TestCase):
+    def test_periodic_beam_requires_flight_before_impact_and_cleanup(self):
+        rows = []
+        phases = ('beam_release', 'beam_before_damage', 'beam_damage1', 'beam_damage2', 'beam_impact')
+        for index, phase in enumerate(phases):
+            item = dict(index=945, definition='projectile_bfg', hidden=0, origin=(0., 0., 0.),
+                        velocity=(0., 350. if index < 4 else 0., 0.))
+            rows.append(dict(phase=phase, frame=index, time=index*16, count=1, items=[item]))
+        rows.append(dict(phase='beam_removed', frame=500, time=8000, count=0, items=[]))
+        self.assertEqual(compare_projectiles(rows, rows, scenario='bfg-beam'), 6)
+        rows[3]['items'][0]['velocity'] = (0., 0., 0.)
+        with self.assertRaisesRegex(ValueError, 'actual BFG flight'):
+            compare_projectiles(rows, rows, scenario='bfg-beam')
+        rows[3]['items'][0]['velocity'] = (0., 350., 0.)
+        rows[-1] = dict(rows[-2], phase='beam_removed')
+        with self.assertRaisesRegex(ValueError, 'cleanup'):
+            compare_projectiles(rows, rows, scenario='bfg-beam')
+
     def read(self, text):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'console.txt'
