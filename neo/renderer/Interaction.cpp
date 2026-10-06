@@ -91,6 +91,24 @@ at the border we throw things out on the border, because if any one
 vertex is clearly inside, the entire triangle will be accepted.
 =====================
 */
+#ifdef __EMSCRIPTEN__
+// Web uses the generic SIMD processor. Fuse its Dot/CmpLT passes to avoid
+// writing and rereading a temporary distance array for every clip plane.
+// Keep the generic float expression and strict epsilon comparison unchanged.
+static void R_CalcInteractionCullBitsWeb( byte *bits, const idPlane *planes,
+		const idDrawVert *verts, int count, int frontBits ) {
+	for ( int p = 0; p < 6; p++ ) {
+		if ( frontBits & ( 1 << p ) ) {
+			continue;
+		}
+		for ( int v = 0; v < count; v++ ) {
+			float distance = planes[p].Normal() * verts[v].xyz + planes[p][3];
+			bits[v] |= ( distance < LIGHT_CLIP_EPSILON ) << p;
+		}
+	}
+}
+#endif
+
 void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo ) {
 	int i, frontBits;
 
@@ -120,6 +138,10 @@ void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangl
 	cullInfo.cullBits = (byte *) R_StaticAlloc( tri->numVerts * sizeof( cullInfo.cullBits[0] ) );
 	SIMDProcessor->Memset( cullInfo.cullBits, 0, tri->numVerts * sizeof( cullInfo.cullBits[0] ) );
 
+#ifdef __EMSCRIPTEN__
+	R_CalcInteractionCullBitsWeb( cullInfo.cullBits, cullInfo.localClipPlanes,
+			tri->verts, tri->numVerts, frontBits );
+#else
 	float *planeSide = (float *) _alloca16( tri->numVerts * sizeof( float ) );
 
 	for ( i = 0; i < 6; i++ ) {
@@ -130,6 +152,7 @@ void R_CalcInteractionCullBits( const idRenderEntityLocal *ent, const srfTriangl
 		SIMDProcessor->Dot( planeSide, cullInfo.localClipPlanes[i], tri->verts, tri->numVerts );
 		SIMDProcessor->CmpLT( cullInfo.cullBits, i, planeSide, LIGHT_CLIP_EPSILON, tri->numVerts );
 	}
+#endif
 }
 
 /*

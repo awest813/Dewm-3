@@ -1800,6 +1800,23 @@ void idBFGProjectile::FreeBeams() {
 
 /*
 ================
+idBFGProjectile::PrintBeamState
+================
+*/
+void idBFGProjectile::PrintBeamState( void ) const {
+	gameLocal.Printf( "BFG_BEAM_CHECK index=%d frame=%d time=%d state=%d next_damage=%d count=%d\n",
+		entityNumber, gameLocal.framenum, gameLocal.time, (int)state, nextDamageTime, beamTargets.Num() );
+	for ( int i = 0; i < beamTargets.Num(); i++ ) {
+		const beamTarget_t &beam = beamTargets[i];
+		idEntity *target = beam.target.GetEntity();
+		gameLocal.Printf( "BFG_BEAM_ITEM slot=%d name=%s present=%d visible=%d\n",
+			i, target ? target->name.c_str() : "none", target ? 1 : 0,
+			beam.modelDefHandle >= 0 && beam.renderEntity.shaderParms[SHADERPARM_ALPHA] > 0.0f ? 1 : 0 );
+	}
+}
+
+/*
+================
 idBFGProjectile::Think
 ================
 */

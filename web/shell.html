@@ -220,6 +220,11 @@
   'use strict';
   var canvas = document.getElementById('canvas');
   var consoleEl = document.getElementById('console');
+  var consoleText = consoleEl.textContent;
+  var consoleDirty = false, consoleFramePending = false, consoleFollow = true;
+  consoleEl.addEventListener('scroll', function () {
+    consoleFollow = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight <= 24;
+  });
   var statusEl = document.getElementById('status');
   var dataStatusEl = document.getElementById('datastatus');
   var progressEl = document.getElementById('progress');
@@ -436,6 +441,7 @@
   });
   document.getElementById('usedev').addEventListener('change', function (ev) {
     document.getElementById('developer-console').hidden = !ev.target.checked;
+    if (ev.target.checked) flushConsole();
   });
   document.getElementById('command-form').addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -527,14 +533,24 @@
   document.getElementById('graphics-apply').addEventListener('click', function () { applyGraphics(false); });
   document.getElementById('graphics-defaults').addEventListener('click', function () { applyGraphics(true); });
 
+  function flushConsole() {
+    if (!consoleDirty) return;
+    consoleDirty = false;
+    consoleEl.textContent = consoleText;
+    if (consoleFollow) consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
   function log(text, isErr) {
-    var line = (isErr ? '[err] ' : '') + text + '\n';
-    consoleEl.textContent += line;
-    // cap log size
-    if (consoleEl.textContent.length > 200000) {
-      consoleEl.textContent = consoleEl.textContent.slice(-200000);
+    consoleText = (consoleText + (isErr ? '[err] ' : '') + text + '\n').slice(-200000);
+    consoleDirty = true;
+    // Engine initialization and diagnostic counters can print many lines in
+    // one frame. Avoid rebuilding the DOM and forcing layout for each line.
+    if (!consoleFramePending) {
+      consoleFramePending = true;
+      requestAnimationFrame(function () {
+        consoleFramePending = false;
+        flushConsole();
+      });
     }
-    consoleEl.scrollTop = consoleEl.scrollHeight;
   }
 
   function setStatus(t) { statusEl.textContent = t; }
@@ -554,6 +570,7 @@
     document.getElementById('launch-hint').textContent = 'Reload, then choose your game files again. Browser saves are kept when storage is available.';
     setStatus(message + ' Reload this page before trying again.');
     document.getElementById('developer-console').hidden = false;
+    flushConsole();
     document.getElementById('usedev').checked = true;
     document.getElementById('retry').focus();
   }

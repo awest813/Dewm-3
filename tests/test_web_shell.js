@@ -13,6 +13,12 @@ const documentListeners = new Map();
 const elementListeners = new Map();
 const windowListeners = new Map();
 let pointerRequests = 0, now = 1000, pendingTimer;
+let consoleFrames = [];
+function flushConsoleFrames() {
+  const frames = consoleFrames;
+  consoleFrames = [];
+  frames.forEach(handler => handler());
+}
 const engineCalls = [];
 const context = {
   location: { href: 'http://localhost:8080/dhewm3.html', search: '' },
@@ -38,6 +44,7 @@ const context = {
   window: { addEventListener(name, handler) { windowListeners.set(name, handler); } },
   Date: { now() { return now; } }, Uint8Array,
   setTimeout(handler) { pendingTimer = handler; return 1; }, clearTimeout() {}, setInterval() {},
+  requestAnimationFrame(handler) { consoleFrames.push(handler); return consoleFrames.length; },
   FS: {
     mkdirTree() {},
     writeFile(name, bytes) { files.set(name, bytes); },
@@ -401,8 +408,51 @@ vm.runInContext(source, context);
 const pixels = new Uint8Array(4);
 pixels.toString = () => { throw Error('pixel buffer must not be stringified'); };
 assert.doesNotThrow(() => new TraceGL().readPixels(0, 0, 1, 1, 0, 0, pixels));
+flushConsoleFrames();
 assert.match(elements.get('console').textContent, /Uint8Array\[4 bytes\]/);
 console.log('WebGL trace buffer regression test passed.');
+
+// Heavy diagnostic output must retain its ordered tail without per-line DOM
+// writes/layout reads, and must not pull readers away from earlier messages.
+const consoleElement = elements.get('console');
+let consoleWrites = 0, consoleLayoutReads = 0, consoleContents = consoleElement.textContent;
+Object.defineProperty(consoleElement, 'textContent', {
+  configurable: true, get() { return consoleContents; },
+  set(value) { ++consoleWrites; consoleContents = value; },
+});
+Object.defineProperty(consoleElement, 'scrollHeight', {
+  configurable: true, get() { ++consoleLayoutReads; return 1000; },
+});
+consoleElement.clientHeight = 220;
+consoleElement.scrollTop = 780;
+context.consoleText = '';
+for (let i = 0; i < 1000; i++) context.Module.print('line ' + i);
+assert.equal(consoleFrames.length, 1, 'a burst schedules one console update');
+assert.equal(consoleWrites, 0, 'logging does not mutate DOM per line');
+assert.equal(consoleLayoutReads, 0, 'logging does not force layout per line');
+flushConsoleFrames();
+assert.equal(consoleWrites, 1);
+assert.equal(consoleLayoutReads, 1);
+assert.equal(consoleContents, Array.from({length: 1000}, (_, i) => 'line ' + i + '\n').join(''));
+consoleElement.scrollTop = 100;
+elementListeners.get('console:scroll')();
+context.Module.printErr('reader stays here');
+flushConsoleFrames();
+assert.equal(consoleElement.scrollTop, 100, 'new output preserves a reader above the tail');
+assert.match(consoleContents, /\[err\] reader stays here\n$/);
+consoleElement.scrollTop = 780;
+elementListeners.get('console:scroll')();
+context.Module.print('x'.repeat(250000));
+context.Module.print('last line');
+flushConsoleFrames();
+assert.equal(consoleContents.length, 200000, 'buffer and DOM keep a bounded tail');
+assert.ok(consoleContents.endsWith('\nlast line\n'));
+assert.equal(consoleElement.scrollTop, 1000, 'returning to the tail resumes following');
+context.Module.printErr('immediate fatal detail');
+context.showEngineFailure('failed');
+assert.match(consoleContents, /\[err\] immediate fatal detail\n$/, 'fatal details flush before showing recovery');
+flushConsoleFrames();
+console.log('Web console batching and scroll regressions passed.');
 
 async function checkFolderRecovery() {
   context.setTimeout = handler => setImmediate(handler);

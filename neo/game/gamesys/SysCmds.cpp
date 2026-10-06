@@ -851,6 +851,9 @@ static void Cmd_TestUsercmd_f( const idCmdArgs &args ) {
 			i, entity->GetEntityDefName(), (int)entity->IsHidden(),
 			projectileOrigin.x, projectileOrigin.y, projectileOrigin.z,
 			projectileVelocity.x, projectileVelocity.y, projectileVelocity.z );
+		if ( entity->IsType( idBFGProjectile::Type ) ) {
+			static_cast<const idBFGProjectile *>( entity )->PrintBeamState();
+		}
 	}
 }
 
