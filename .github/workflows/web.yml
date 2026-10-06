@@ -21,6 +21,7 @@ on:
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
       - 'tests/rotation_native.txt'
+      - 'tests/rotation_acos_native.txt'
       - 'tests/web_fov_check.py'
       - 'tests/fov_native.txt'
       - 'tests/explosive_weapon_parity.cfg'
@@ -32,6 +33,9 @@ on:
       - 'tests/combat_pursuit_parity.cfg'
       - 'tests/combat_parity_check.py'
       - 'tests/test_combat_parity.py'
+      - 'tests/ranged_combat_parity.cfg'
+      - 'tests/ranged_combat_parity_check.py'
+      - 'tests/test_ranged_combat_parity.py'
       - 'tests/bfg_beam_parity_check.py'
       - 'tests/test_bfg_beam_parity.py'
       - 'tests/shadow_cull_check.py'
@@ -72,6 +76,7 @@ on:
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
       - 'tests/rotation_native.txt'
+      - 'tests/rotation_acos_native.txt'
       - 'tests/web_fov_check.py'
       - 'tests/fov_native.txt'
       - 'tests/explosive_weapon_parity.cfg'
@@ -83,6 +88,9 @@ on:
       - 'tests/combat_pursuit_parity.cfg'
       - 'tests/combat_parity_check.py'
       - 'tests/test_combat_parity.py'
+      - 'tests/ranged_combat_parity.cfg'
+      - 'tests/ranged_combat_parity_check.py'
+      - 'tests/test_ranged_combat_parity.py'
       - 'tests/bfg_beam_parity_check.py'
       - 'tests/test_bfg_beam_parity.py'
       - 'tests/shadow_cull_check.py'
@@ -147,6 +155,9 @@ jobs:
       - name: Check combat encounter verifier
         run: python3 -m unittest discover -s tests -p test_combat_parity.py
 
+      - name: Check ranged combat encounter verifier
+        run: python3 -m unittest discover -s tests -p test_ranged_combat_parity.py
+
       - name: Syntax-check scripts
         run: |
           bash -n scripts/web-setup.sh
@@ -197,7 +208,7 @@ jobs:
           em++ build-web/web-angle-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/web-angle-check.js
           node build-web/web-angle-check.js
           python3 tests/web_rotation_check.py build-web/rotation-parity-check.cpp
-          em++ build-web/rotation-parity-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sENVIRONMENT=node -o build-web/rotation-parity-check.js
+          em++ build-web/rotation-parity-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sSTACK_SIZE=8MB -sENVIRONMENT=node -o build-web/rotation-parity-check.js
           node build-web/rotation-parity-check.js
           python3 tests/web_fov_check.py build-web/web-fov-check.cpp
           em++ build-web/web-fov-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/web-fov-check.js

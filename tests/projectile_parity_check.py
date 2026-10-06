@@ -4,6 +4,7 @@ Checks launch, motion and removal evidence, alongside weapon/tick/ammo parity.
 This does not prove enemy damage, BFG target selection or chainsaw hit accuracy.
 """
 import argparse
+import math
 from pathlib import Path
 import re
 
@@ -14,6 +15,49 @@ ITEM = re.compile(r'PROJECTILE_ITEM index=(\d+)\s*def=(\S+?)\s*hidden=([01])\s*o
 
 
 def snapshots(path):
+    return _snapshots(Path(path).read_text(encoding='utf-8', errors='replace'))
+
+
+def owned_snapshots(path, owner):
+    """Parse the read-only named-owner command, retaining absent-owner evidence."""
+    owners = []
+    pattern = re.compile(r'OWNED_PROJECTILE_CHECK owner=(\S+)\s*present=([01])\s*frame=(\d+)\s*time=(\d+)\s*count=(\d+)$')
+    from render_state_parity_check import _records
+    for values in _records(path, 'OWNED_PROJECTILE_CHECK ', pattern):
+        name, present, frame, time, count = values
+        if name != owner or (present == '0' and count != '0'):
+            raise ValueError('wrong or absent projectile owner with live missiles')
+        owners.append(dict(owner=name, present=int(present), frame=int(frame), time=int(time), count=int(count)))
+    # Reuse the wrapped item/vector parser, excluding player-owned snapshots.
+    lines = []
+    pending = False
+    headers = iter(owners)
+    for line in Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
+        if line.startswith('PARITY_PHASE '):
+            lines.append(line)
+            pending = False
+        elif line.startswith('OWNED_PROJECTILE_CHECK '):
+            # Headers are reconstructed from the strictly parsed records below.
+            row = next(headers)
+            lines.append(f'PROJECTILE_CHECK frame={row["frame"]} time={row["time"]} count={row["count"]}')
+            pending = False
+        elif line.startswith('OWNED_PROJECTILE_ITEM '):
+            lines.append(line.replace('OWNED_PROJECTILE_ITEM ', 'PROJECTILE_ITEM ', 1))
+            pending = True
+        elif pending:
+            if ITEM.fullmatch(lines[-1]) and not re.fullmatch(r'[-\d.,]+', line):
+                pending = False
+            else:
+                lines[-1] += line
+    rows = _snapshots('\n'.join(lines))
+    if len(rows) != len(owners):
+        raise ValueError('owned projectile checkpoint count differs')
+    for row, identity in zip(rows, owners):
+        row.update(owner=identity['owner'], present=identity['present'])
+    return rows
+
+
+def _snapshots(text):
     rows = []
     phase = ''
     pending = ''
@@ -31,12 +75,12 @@ def snapshots(path):
                 raise ValueError('incomplete projectile item')
             index, definition, hidden, origin, velocity = match.groups()
             vectors = [tuple(map(float, value.split(','))) for value in (origin, velocity)]
-            if any(len(vector) != 3 for vector in vectors):
-                raise ValueError('incomplete projectile vector')
+            if any(len(vector) != 3 or not all(map(math.isfinite, vector)) for vector in vectors):
+                raise ValueError('incomplete or nonfinite projectile vector')
             rows[-1]['items'].append(dict(index=int(index), definition=definition,
                                          hidden=int(hidden), origin=vectors[0], velocity=vectors[1]))
 
-    for line in Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
+    for line in text.splitlines():
         if line.startswith(('PROJECTILE_CHECK ', 'PROJECTILE_ITEM ', 'PARITY_PHASE ')):
             if pending:
                 finish(pending)

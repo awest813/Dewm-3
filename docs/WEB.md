@@ -1922,15 +1922,15 @@ The subsequent orientation audit found identical matrix products and normalized
 axes, followed by a one-bit difference in the quaternion angle reconstructed by
 `idMat3::ToRotation`: native 5.62849379 degrees, web 5.62849331. The web `acosf`
 rounding changes the collision end axis and then spreads through the ragdoll.
-The web conversion now evaluates the inverse cosine in double precision before
+The first web correction evaluated the inverse cosine in double precision before
 converting to float, retaining the existing endpoint clamps. Native conversion
 and the shared `idMath::ACos` helper remain unchanged. A broader helper change
 was rejected because other inputs differed from the native results.
 
 `tests/web_rotation_check.py` extracts the actual conversion and math helpers.
-Ten MSVC-measured matrix fixtures cover the observed drift, identity, an endpoint
-clamp, all diagonal branches and signed rotations. All forty angle/axis values
-match exactly in native and production-flag WebAssembly checks. Reverting the
+The initial ten MSVC-measured matrix fixtures cover the observed drift, identity,
+an endpoint clamp, all diagonal branches and signed rotations. All forty
+angle/axis values matched in native and production-flag WebAssembly checks. Reverting the
 web correction fails the observed-drift case; this is not exhaustive coverage
 of every rotation input. The fixtures and compiled check are included in web CI.
 
@@ -1945,6 +1945,91 @@ each, plus player/projectile/clock evidence. Logs are ignored:
 `build-web/bfg-removed-quaternion-fixed-console.txt`. Native and web engine builds,
 61 relevant Python regressions and eight launcher groups pass. These fixtures
 do not establish full campaign, rendering or sustained 60 FPS accuracy.
+
+### Stock ranged combat and retaliation audit (2026-10-05)
+
+`tests/ranged_combat_parity.cfg` places a stock imp at -226/-2030/16 after
+the player settles at the Mars City 2 start. It retains the original AI,
+navigation, animation-driven missile attacks, normal skill and dynamic
+protection. No notarget, forced enemy, health override or direct damage command
+is used. Three shotgun shots reduce imp health from 130 to 74 to 32 to -66;
+ammunition falls from 20 to 17. The player takes fireball damage and survives
+with 34 health. The imp pursues, enters combat, dies, moves as a ragdoll and is
+removed along with its missiles through stock delayed cleanup.
+
+The read-only cheat command `testOwnedProjectiles <owner entity name>` reports
+that owner's missiles, including explicit missing-owner/zero-count evidence.
+It does not create, launch, trace, stop or remove projectiles and performs no
+work unless invoked. Unlike the existing player-only snapshots, it can sample
+enemy fireballs. The fixture records the same missile in flight at frame 496,
+closer to the player at 501 and stopped on impact at 506. Player health changes
+from 100 to 89 at the impact checkpoint, while the enemy remains more than 100
+map units away. This distinguishes the sampled hit from melee damage.
+
+A detailed native exploration was reduced to sixteen player checkpoints while
+preserving every retained player, enemy, missile and clock result exactly.
+Both the native and rebuilt browser engine now match all serialized evidence:
+sixteen player and player-projectile checkpoints, fifteen enemy and owned-missile
+snapshots, thirteen AI state records and sixteen game/render/frame/seed records.
+The comparison keeps the existing 0.001 player movement tolerance; enemy,
+missile, AI and seed comparisons are exact. Evidence is ignored:
+`build-windows/ranged-combat-native/full-console.txt` and
+`build-web/ranged-combat-console.txt`. No gameplay correction was needed for
+this encounter.
+
+`tests/ranged_combat_parity_check.py` requires pursuit, three retaliatory hits,
+ranged separation, same-missile approach/impact, knockback, death and cleanup
+even when both logs agree. Its four asset-free regression groups reject missing
+or changed coverage. Named-owner parsing also rejects wrong owners, malformed
+headers and inconsistent counts, and handles native wrapped vectors. Native
+and web builds pass, as do 67 relevant Python tests and eight launcher groups.
+The new fixture and verifier are covered by web CI path triggers.
+
+This audit establishes simulation parity for this one normal-skill encounter.
+It does not prove other enemies, difficulty levels, campaign progression,
+moving-camera/material rendering, changing BFG occlusion, sustained 60 FPS or
+physical capture in the embedded browser. Those remain open against the full
+accuracy and polish objective.
+
+QuickSave was restored at 1263.77/-1501/68.25, yaw 180, with 100 health.
+Readbacks confirm normal game timing, shadows and the 60 FPS cap; the console
+was hidden and the audio-enable control invoked. The restoration screenshot
+shows 38 FPS at that instant, so the cap is not evidence of sustaining 60 FPS.
+Physical capture remains unavailable in the embedded browser, with right-button
+drag as the fallback. Evidence: ignored `build-web/ranged-restored-console.txt`
+and `C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/ranged-audit-restored.jpg`.
+
+### Broader rotation rounding audit (2026-10-05)
+
+An additional 4,749 matrix cases cover full turns at half-degree increments on
+five axes, small signed angles and 1,024 mixed-axis quaternion inputs. The
+double-precision correction above differs from the original MSVC results in
+26 cases; the original web float inverse cosine differs in 308. Double precision
+improves 301 cases but regresses nineteen, so it is insufficient for matching
+native collision rotations across this wider sample.
+
+`neo/idlib/math/WebMath.h` adapts the MIT-licensed AMD `acosf` approximation with
+explicit fused operations matching the measured MSVC/UCRT FMA path. Its license
+and pinned source attribution are retained. Only the web matrix conversion uses
+this helper; native conversion, shared `idMath::ACos` and endpoint clamps remain
+unchanged. It uses an approximation rather than fixture-specific corrections.
+
+The extracted production helper and conversion pass all 4,759 matrix fixtures
+and 1,291 inverse-cosine bit fixtures in both MSVC and WebAssembly. The latter
+include signed zero, clamps, endpoint neighbors and domain samples. CI runs the
+check with production math flags and the engine's 8 MiB stack. An additional
+native experiment compared the candidate kernel against the original CRT for
+all 16,777,218 floating-point inputs with either sign and magnitude in [0.5,1],
+with zero differences. That dense experiment ran natively; it does not establish
+exhaustive WebAssembly or full floating-point-domain parity. Evidence is ignored
+in `build-web/rotation-domain-report.json` and `build-web/acos-fma-dense-report.txt`.
+
+Both engine builds pass with the final helper. The rebuilt browser engine was
+also rerun against the original native stock-combat and ranged-combat evidence.
+All serialized player, enemy, projectile, AI and clock records match exactly
+in both encounters. Logs are ignored in `build-web/combat-fma-console.txt` and
+`build-web/ranged-fma-console.txt`; build logs are `rotation-fma-build.log` in
+each build directory. These samples do not establish full campaign accuracy.
 
 ## 10. Files added for web
 

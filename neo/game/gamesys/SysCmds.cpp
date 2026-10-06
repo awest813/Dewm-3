@@ -768,6 +768,34 @@ static void Cmd_TestEntityState_f( const idCmdArgs &args ) {
 		origin.x, origin.y, origin.z, velocity.x, velocity.y, velocity.z );
 }
 
+// Named-owner snapshots include enemy missiles without changing their lifecycle.
+static void Cmd_TestOwnedProjectiles_f( const idCmdArgs &args ) {
+	if ( !gameLocal.GetLocalPlayer() || !gameLocal.CheatsOk() || gameLocal.isMultiplayer ) return;
+	if ( args.Argc() != 2 ) {
+		gameLocal.Printf( "usage: testOwnedProjectiles <owner entity name>\n" );
+		return;
+	}
+	idEntity *owner = gameLocal.FindEntity( args.Argv( 1 ) );
+	int count = 0;
+	for ( int i = 0; owner && i < gameLocal.num_entities; ++i ) {
+		idEntity *entity = gameLocal.entities[i];
+		if ( entity && entity->IsType( idProjectile::Type ) &&
+			static_cast<const idProjectile *>( entity )->GetOwner() == owner ) ++count;
+	}
+	gameLocal.Printf( "OWNED_PROJECTILE_CHECK owner=%s present=%d frame=%d time=%d count=%d\n",
+		args.Argv( 1 ), owner ? 1 : 0, gameLocal.framenum, gameLocal.time, count );
+	for ( int i = 0; owner && i < gameLocal.num_entities; ++i ) {
+		idEntity *entity = gameLocal.entities[i];
+		if ( !entity || !entity->IsType( idProjectile::Type ) ||
+			static_cast<const idProjectile *>( entity )->GetOwner() != owner ) continue;
+		const idVec3 &origin = entity->GetPhysics()->GetOrigin();
+		const idVec3 &velocity = entity->GetPhysics()->GetLinearVelocity();
+		gameLocal.Printf( "OWNED_PROJECTILE_ITEM index=%d def=%s hidden=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f\n",
+			i, entity->GetEntityDefName(), (int)entity->IsHidden(), origin.x, origin.y, origin.z,
+			velocity.x, velocity.y, velocity.z );
+	}
+}
+
 static idCVar g_debugPlayerAFFrame( "g_debugPlayerAFFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
 	"testUsercmd frame for read-only player ragdoll body snapshots; -1 disables" );
 
@@ -2502,6 +2530,7 @@ void idGameLocal::InitConsoleCommands( void ) {
 	cmdSystem->AddCommand( "getviewpos",			Cmd_GetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"prints the current view position" );
 	cmdSystem->AddCommand( "testUsercmd", Cmd_TestUsercmd_f, CMD_FL_GAME|CMD_FL_CHEAT, "advances up to 300 simulation ticks with fixed input and reports movement/ammo; use a disposable map or reload afterward" );
 	cmdSystem->AddCommand( "testEntityState", Cmd_TestEntityState_f, CMD_FL_GAME|CMD_FL_CHEAT, "reports named entity health and physics without changing the simulation", idGameLocal::ArgCompletion_EntityName );
+	cmdSystem->AddCommand( "testOwnedProjectiles", Cmd_TestOwnedProjectiles_f, CMD_FL_GAME|CMD_FL_CHEAT, "reports named-owner projectile physics without changing the simulation", idGameLocal::ArgCompletion_EntityName );
 	cmdSystem->AddCommand( "testTrace", Cmd_TestTrace_f, CMD_FL_GAME|CMD_FL_CHEAT, "read-only point collision probe for floor and shot-path audits; excludes the local player" );
 	cmdSystem->AddCommand( "setviewpos",			Cmd_SetViewpos_f,			CMD_FL_GAME|CMD_FL_CHEAT,	"sets the current view position" );
 	cmdSystem->AddCommand( "teleport",				Cmd_Teleport_f,				CMD_FL_GAME|CMD_FL_CHEAT,	"teleports the player to an entity location", idGameLocal::ArgCompletion_EntityName );

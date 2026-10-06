@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/platform.h"
 #include "idlib/containers/List.h"
 #include "idlib/math/Math.h"
+#ifdef __EMSCRIPTEN__
+#include "idlib/math/WebMath.h"
+#endif
 #include "idlib/math/Angles.h"
 #include "idlib/math/Quat.h"
 #include "idlib/math/Rotation.h"
@@ -294,12 +297,9 @@ idRotation idMat3::ToRotation( void ) const {
 		r.vec[k]	= ( mat[ k ][ i ] + mat[ i ][ k ] ) * s;
 	}
 #ifdef __EMSCRIPTEN__
-	// Keep quaternion angle reconstruction accurate near identity. Web acosf
-	// can lose a float bit here, which changes collision axes and ragdoll motion.
-	// Retain ACos's endpoint clamps and leave the native conversion unchanged.
-	r.angle = r.angle > -1.0f && r.angle < 1.0f
-		? static_cast<float>( acos( static_cast<double>( r.angle ) ) )
-		: idMath::ACos( r.angle );
+	// Match native float reconstruction, including its fused rounding. A double
+	// acos fixes near-identity drift but differs for some larger rotations.
+	r.angle = WebRotationACos( r.angle );
 #else
 	r.angle = idMath::ACos( r.angle );
 #endif
