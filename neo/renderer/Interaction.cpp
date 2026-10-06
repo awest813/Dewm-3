@@ -54,6 +54,18 @@ the number of surface triangles, which will be used to handle dangling
 edge silhouettes.
 ================
 */
+#ifdef __EMSCRIPTEN__
+// Preserve the generic Dot/CmpGE expression while avoiding a temporary array
+// and its second pass for each dynamically rebuilt lighting interaction.
+static void R_CalcInteractionFacingWeb( byte *facing, const idVec3 &origin,
+		const idPlane *planes, int count ) {
+	for ( int i = 0; i < count; ++i ) {
+		float distance = origin * planes[i].Normal() + planes[i][3];
+		facing[i] = distance >= 0.0f;
+	}
+}
+#endif
+
 void R_CalcInteractionFacing( const idRenderEntityLocal *ent, const srfTriangles_t *tri, const idRenderLightLocal *light, srfCullInfo_t &cullInfo ) {
 	idVec3 localLightOrigin;
 
@@ -71,12 +83,16 @@ void R_CalcInteractionFacing( const idRenderEntityLocal *ent, const srfTriangles
 
 	cullInfo.facing = (byte *) R_StaticAlloc( ( numFaces + 1 ) * sizeof( cullInfo.facing[0] ) );
 
+#ifdef __EMSCRIPTEN__
+	R_CalcInteractionFacingWeb( cullInfo.facing, localLightOrigin, tri->facePlanes, numFaces );
+#else
 	// calculate back face culling
 	float *planeSide = (float *) _alloca16( numFaces * sizeof( float ) );
 
 	// exact geometric cull against face
 	SIMDProcessor->Dot( planeSide, localLightOrigin, tri->facePlanes, numFaces );
 	SIMDProcessor->CmpGE( cullInfo.facing, planeSide, 0.0f, numFaces );
+#endif
 
 	cullInfo.facing[ numFaces ] = 1;	// for dangling edges to reference
 }

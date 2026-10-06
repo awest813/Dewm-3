@@ -54,8 +54,15 @@ struct webPerf_t {
 	double phases[16];
 	unsigned int draws, indexQueries, programBinds, uniformUploads, bufferCreates;
 	unsigned int uniformWrites, bufferBinds, attribWrites;
+	unsigned int callbacks, skippedCallbacks;
 };
 static webPerf_t g_webPerf = {};
+
+extern "C" void R_GLES_PerfCallback( bool rendered ) {
+	if (!g_webPerf.remaining) return;
+	++g_webPerf.callbacks;
+	if (!rendered) ++g_webPerf.skippedCallbacks;
+}
 
 extern "C" void R_GLES_PerfAsync( double cpuMs ) {
 	if (g_webPerf.remaining) g_webPerf.asyncMs += cpuMs;
@@ -83,6 +90,7 @@ void R_GLES_PerfFrame( double cpuMs ) {
 		g_webPerf.asyncMs = 0;
 		g_webPerf.bufferCreates = 0;
 		g_webPerf.uniformWrites = g_webPerf.bufferBinds = g_webPerf.attribWrites = 0;
+		g_webPerf.callbacks = g_webPerf.skippedCallbacks = 0;
 		memset(g_webPerf.phases, 0, sizeof(g_webPerf.phases));
 		return;
 	}
@@ -95,6 +103,9 @@ void R_GLES_PerfFrame( double cpuMs ) {
 	common->Printf("Web perf: %.1f fps, CPU mean %.2f ms, p95 %.2f ms; per frame %.1f draws, %.1f index queries, %.1f program binds, %.1f full uniform uploads\n",
 		frames * 1000.0 / elapsed, total / frames, g_webPerf.cpu[(g_webPerf.samples * 95 - 1) / 100],
 		g_webPerf.draws / frames, g_webPerf.indexQueries / frames, g_webPerf.programBinds / frames, g_webPerf.uniformUploads / frames);
+	common->Printf("Web perf: %.1f animation callbacks/s, %u cap skips (%.1f%%)\n",
+		g_webPerf.callbacks * 1000.0 / elapsed, g_webPerf.skippedCallbacks,
+		g_webPerf.callbacks ? 100.0 * g_webPerf.skippedCallbacks / g_webPerf.callbacks : 0.0);
 	common->Printf("Web perf: CPU breakdown %.2f ms async input/audio, %.2f ms game/render\n",
 		g_webPerf.asyncMs / frames, (total - g_webPerf.asyncMs) / frames);
 	common->Printf("Web perf: %.2f ms events, %.2f ms commands/network, %.2f ms session, %.2f ms draw\n",

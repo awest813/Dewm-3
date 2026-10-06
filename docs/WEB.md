@@ -2031,6 +2031,71 @@ in both encounters. Logs are ignored in `build-web/combat-fma-console.txt` and
 `build-web/ranged-fma-console.txt`; build logs are `rotation-fma-build.log` in
 each build directory. These samples do not establish full campaign accuracy.
 
+### Triangle-facing optimization and callback profiling (2026-10-05)
+
+At the restored hangar save, a warm 600-frame sample with normal simulation,
+audio, Ultra textures, 8x filtering and shadows measures 43.1 FPS, CPU mean
+12.60 ms and p95 16.66 ms. Models/interactions account for 4.55 ms of the
+5.87 ms scene-generation phase. A 60/unlocked/60 comparison at the same
+813x610 drawing buffer measures 43.3/47.0/45.1 FPS. Actor state and machine
+load vary across these live samples, so these are not interchangeable controlled
+workloads. Unlocked mode also remains below 60 FPS. Evidence is ignored
+`build-web/facing-perf-before-console.txt`.
+
+`R_CalcInteractionFacing` now fuses the web generic SIMD Dot/CmpGE passes.
+It preserves the float expression and inclusive zero comparison while removing
+the temporary distance array and its second pass. The native path, cached
+facing results, face-plane generation and dangling-edge sentinel remain unchanged.
+No shadow geometry, effect or simulation tick is skipped.
+
+`tests/shadow_facing_check.py` extracts the actual helper and original generic
+passes. Its production-flag WebAssembly check passes 584,352 exact facing-byte
+comparisons across random planes, zero and adjacent boundaries, signed zero,
+subnormals, edge counts and output-buffer guards. The sentinel is checked too.
+A negative harness replacing `>=` with `>` fails at the first zero boundary.
+The alternating nine-sample median microbenchmark measures old/fused times of
+30.415/21.446 ms for 32 faces, 29.318/22.349 ms for 256 and 32.054/22.965 ms
+for 2,048, approximately 24–30% less time in this kernel. These are not whole-game
+frame-rate measurements. Evidence is ignored `build-web/shadow-facing-results.txt`
+and `build-web/shadow-facing-negative-results.txt`; CI includes this compiled check.
+
+Both engine builds pass, along with 98 extracted renderer-state checks and
+108 timing/input/graphics checks. All three new 640x480 frozen hangar PNGs are
+pixel-identical to fresh pre-change captures, with largest channel change zero.
+Their camera readbacks, clocks, frames and random seeds match the native fixture.
+Native RGB mean errors remain 0.100183/0.185637/0.250479. This preserves the
+tested views without relaxing comparisons. Evidence is ignored in
+`build-web/render-hangar/facing-before/` and `facing-after/`; each build directory
+contains `shadow-facing-build.log`.
+
+`webperf` also reports animation callback delivery and callbacks skipped by the
+frame cap. Counters run only during an explicit sample and reset with its warmup;
+the render-cap policy and native game clock remain unchanged. This separates
+cap skips from slow callback delivery without claiming to isolate GPU time.
+
+The new live samples retain normal simulation, running WebAudio, shadows and
+the 813x610 drawing buffer:
+
+| Cap | Frames | FPS | Callbacks/s | Cap skips | CPU mean | CPU p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 60, first sample | 600 | 48.5 | 51.4 | 36 (5.7%) | 15.16 ms | 25.59 ms |
+| Unlocked | 600 | 37.0 | 37.0 | 0 (0.0%) | 18.25 ms | 39.75 ms |
+| 30 | 300 | 29.5 | 57.4 | 284 (48.6%) | 12.62 ms | 22.63 ms |
+| 60, final sample | 600 | 45.9 | 49.2 | 43 (6.7%) | 14.70 ms | 24.05 ms |
+
+Unlocked correctly skips no callbacks, and the 30 FPS sample skips almost half.
+The 60 FPS cap accounts for some skipped work but does not explain the whole
+shortfall. CPU tails and callback delivery still exceed the 16.67 ms frame budget.
+These variable-load samples do not establish a whole-game speedup from the
+kernel change or sustained 60 FPS. Further work should profile the model and
+interaction phase in more detail and separate GPU work from callback scheduling.
+Evidence is ignored `build-web/facing-perf-after-console.txt`.
+
+QuickSave was restored at 1263.77/-1501/68.25, yaw 180, and the 60 FPS cap was
+restored after the controls. Full campaign and moving-camera/material fidelity,
+physical pointer capture and sustained movement/combat 60 FPS remain unproven
+against the full accuracy and polish objective.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,

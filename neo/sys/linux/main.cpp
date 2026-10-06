@@ -50,6 +50,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "sys/WebFramePacing.h"
 #include "renderer/tr_local.h"
 extern "C" void R_GLES_PerfFrame( double cpuMs );
+extern "C" void R_GLES_PerfCallback( bool rendered );
 #endif
 
 
@@ -520,7 +521,9 @@ static void WebMainLoop() {
 		limit = 60;
 		r_webFrameLimit.SetInteger(limit);
 	}
-	if (!pacing.ShouldRender(frameStart, limit)) return;
+	bool rendered = pacing.ShouldRender(frameStart, limit);
+	R_GLES_PerfCallback(rendered);
+	if (!rendered) return;
 	common->Frame();
 	R_GLES_PerfFrame(emscripten_get_now() - frameStart);
 }
