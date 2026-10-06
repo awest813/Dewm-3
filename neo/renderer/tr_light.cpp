@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/Window.h"
 
 #include "renderer/tr_local.h"
+#include "renderer/WebRenderTiming.h"
 
 #include "Model_local.h"
 
@@ -1112,6 +1113,9 @@ it and any necessary overlays
 ===================
 */
 idRenderModel *R_EntityDefDynamicModel( idRenderEntityLocal *def ) {
+#ifdef __EMSCRIPTEN__
+	webRenderPhase_t webModelTimer(16);
+#endif
 	bool callbackUpdate;
 
 	// allow deferred entities to construct themselves
@@ -1355,6 +1359,9 @@ each viewEntity that has a non-empty scissorRect
 ===============
 */
 static void R_AddAmbientDrawsurfs( viewEntity_t *vEntity ) {
+#ifdef __EMSCRIPTEN__
+	webRenderPhase_t webAmbientTimer(17);
+#endif
 	int					i, total;
 	idRenderEntityLocal	*def;
 	srfTriangles_t		*tri;

@@ -28,6 +28,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
+#include "renderer/WebRenderTiming.h"
 #include "renderer/RenderWorld_local.h"
 #include "renderer/VertexCache.h"
 
@@ -318,6 +319,45 @@ The resulting surface will be a subset of the original triangles,
 it will never clip triangles, but it may cull on a per-triangle basis.
 ====================
 */
+#ifdef __EMSCRIPTEN__
+// Keep the original index and vertex order while collecting bounds in the same
+// pass. Scan the empty prefix before creating the bound accumulators, so a
+// completely back-facing surface does not carry them through its whole loop.
+static int R_FilterLightTrianglesWeb( glIndex_t *dst, idBounds &bounds,
+		const idDrawVert *verts, const glIndex_t *src, const byte *facing, int numIndexes ) {
+	int numFaces = numIndexes / 3;
+	int first = 0;
+	while ( first < numFaces && !facing[first] ) {
+		++first;
+	}
+	if ( first == numFaces ) {
+		bounds.Clear();
+		return 0;
+	}
+
+	idBounds localBounds;
+	localBounds.Clear();
+	int count = 0;
+	for ( int face = first; face < numFaces; ++face ) {
+		if ( !facing[face] ) {
+			continue;
+		}
+		int i1 = src[face * 3 + 0];
+		int i2 = src[face * 3 + 1];
+		int i3 = src[face * 3 + 2];
+		dst[count + 0] = i1;
+		dst[count + 1] = i2;
+		dst[count + 2] = i3;
+		count += 3;
+		localBounds.AddPoint( verts[i1].xyz );
+		localBounds.AddPoint( verts[i2].xyz );
+		localBounds.AddPoint( verts[i3].xyz );
+	}
+	bounds = localBounds;
+	return count;
+}
+#endif
+
 static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 									 const srfTriangles_t *tri, const idRenderLightLocal *light,
 									 const idMaterial *shader, srfCullInfo_t &cullInfo ) {
@@ -325,15 +365,11 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 	int			numIndexes;
 	glIndex_t	*indexes;
 	srfTriangles_t	*newTri;
-	int			c_backfaced;
-	int			c_distance;
 	idBounds	bounds;
 	bool		includeBackFaces;
 	int			faceNum;
 
 	tr.pc.c_createLightTris++;
-	c_backfaced = 0;
-	c_distance = 0;
 
 	numIndexes = 0;
 	indexes = NULL;
@@ -384,9 +420,11 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 			// back face cull the individual triangles
 			indexes = newTri->indexes;
 			const byte *facing = cullInfo.facing;
+#ifdef __EMSCRIPTEN__
+			numIndexes = R_FilterLightTrianglesWeb( indexes, bounds, tri->verts, tri->indexes, facing, tri->numIndexes );
+#else
 			for ( faceNum = i = 0; i < tri->numIndexes; i += 3, faceNum++ ) {
 				if ( !facing[ faceNum ] ) {
-					c_backfaced++;
 					continue;
 				}
 				indexes[numIndexes+0] = tri->indexes[i+0];
@@ -397,6 +435,7 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 
 			// get bounds for the surface
 			SIMDProcessor->MinMax( bounds[0], bounds[1], tri->verts, indexes, numIndexes );
+#endif
 
 			// decrease the size of the memory block to the size of the number of used indexes
 			R_ResizeStaticTriSurfIndexes( newTri, numIndexes );
@@ -420,7 +459,6 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 			if ( !includeBackFaces ) {
 				// back face cull
 				if ( !facing[ faceNum ] ) {
-					c_backfaced++;
 					continue;
 				}
 			}
@@ -432,7 +470,6 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 			// fast cull outside the frustum
 			// if all three points are off one plane side, it definately isn't visible
 			if ( cullBits[i1] & cullBits[i2] & cullBits[i3] ) {
-				c_distance++;
 				continue;
 			}
 
@@ -461,6 +498,10 @@ static srfTriangles_t *R_CreateLightTris( const idRenderEntityLocal *ent,
 		R_ResizeStaticTriSurfIndexes( newTri, numIndexes );
 	}
 
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfLightTriangles( tri->numIndexes / 3, numIndexes / 3,
+		cullInfo.cullBits == LIGHT_CULL_ALL_FRONT && !includeBackFaces );
+#endif
 	if ( !numIndexes ) {
 		R_ReallyFreeStaticTriSurf( newTri );
 		return NULL;
@@ -862,6 +903,9 @@ The results of this are cached and valid until the light or entity change.
 ====================
 */
 void idInteraction::CreateInteraction( const idRenderModel *model ) {
+#ifdef __EMSCRIPTEN__
+	webRenderPhase_t webBuildTimer(19);
+#endif
 	const idMaterial *	lightShader = lightDef->lightShader;
 	const idMaterial*	shader;
 	bool				interactionGenerated;
@@ -1063,6 +1107,9 @@ instantiate the dynamic model to find out
 ==================
 */
 void idInteraction::AddActiveInteraction( void ) {
+#ifdef __EMSCRIPTEN__
+	webRenderPhase_t webInteractionTimer(18);
+#endif
 	viewLight_t *	vLight;
 	viewEntity_t *	vEntity;
 	idScreenRect	shadowScissor;

@@ -2096,6 +2096,138 @@ restored after the controls. Full campaign and moving-camera/material fidelity,
 physical pointer capture and sustained movement/combat 60 FPS remain unproven
 against the full accuracy and polish objective.
 
+### Model and interaction profiling (2026-10-06)
+
+`webperf` now measures model resolution/animation, ambient surface submission,
+active lighting interactions and interaction construction separately. It also
+reports calls per sampled frame. The shared `WebRenderTiming.h` scope timer
+preserves early returns and nested scopes. Outside an explicit sample it makes
+no browser clock reads. These measurements include profiling overhead.
+
+The detail intervals overlap: active interactions can resolve a model and build
+new interactions, and all renderer detail is inside the existing view timers.
+The model-resolution count includes cached lookups, not just newly animated
+models. Do not sum these intervals as independent CPU costs.
+
+Three 600-frame live samples at the restored hangar camera use normal game
+timing, running WebAudio, shadows and 8x filtering. GL readbacks report an
+813x610 viewport. The DOM reports the page visible, but that does not prove
+that the embedded browser presents frames at 60 Hz.
+
+| Mode | FPS / callbacks per second | CPU mean / p95 | Model resolution | Ambient | Active interactions | Interaction builds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 60, first | 29.4 / 29.4 | 13.22 / 18.23 ms | 0.41 ms | 0.74 ms | 3.36 ms | 1.58 ms |
+| 60, repeat | 30.0 / 30.0 | 9.23 / 13.31 ms | 0.31 ms | 0.52 ms | 2.37 ms | 1.09 ms |
+| Unlocked | 29.3 / 29.3 | 22.23 / 35.12 ms | 0.68 ms | 1.34 ms | 5.85 ms | 2.55 ms |
+
+All three samples skip zero callbacks. Model resolution averages about 223
+calls, ambient submission 45, active interactions 418–420 and construction
+41–42 per frame. Active lighting interactions dominate the measured model
+detail; construction accounts for a substantial part of that interval. This
+changes the next CPU target from animation to interaction work. The repeat's
+CPU p95 fits the 16.67 ms budget while callback delivery remains near 30 Hz;
+the unlocked sample also has slow CPU tails. These different live workloads
+do not isolate the reason for callback delivery or establish a speedup.
+No rendering quality, frame-cap policy or game timing was changed by this
+profiling work. Evidence is ignored `build-web/model-perf-detail-console.txt`.
+The earlier attempted pre-change sample was interrupted before completion and
+is not used as a comparison.
+
+`tests/web_perf_check.py` compiles the actual scope timer and profiler functions.
+Its 21 checks cover idle behavior, nested intervals, early returns, phase
+transitions and bounds, discarded warmup time/calls, frame-count denominators,
+CPU percentiles, callback skips, completion and replacement samples. Both
+engine builds pass, as do 98 renderer-state and 108 timing/input/graphics checks.
+The profiler check is included in web CI. Build evidence is ignored
+`model-timing-build.log` in each build directory.
+
+Three fresh-session 640x480 hangar captures are pixel-identical to the previous
+build, with maximum channel change zero. Their game/render clocks, frame numbers
+and random seeds match the native fixture. Native RGB mean errors remain
+0.100183/0.185637/0.250479. A preceding reused-session run had small pixel
+differences despite matching these clocks and seeds; its startup history was
+different and the cause is not isolated. Keep that evidence separate rather
+than treating the state tuple as proof of complete scene equivalence. Evidence
+is ignored in `build-web/render-hangar/model-timing-fresh/` and `model-timing/`.
+The first capture attempted after an already-advanced opening cinematic was
+discarded; the accepted fixture batches map setup and the first freeze together.
+
+The remaining objective still includes full campaign/gameplay accuracy,
+moving-camera and material fidelity, equivalent reload/save lifecycle behavior,
+physical capture and sustained movement/combat 60 FPS. This audit establishes
+better measurements and preserves the three fresh-session views, not completion
+of those broader requirements.
+
+QuickSave was restored at 1263.77/-1501/68.25, yaw 180. Readbacks confirm normal
+timing and view effects, HUD/weapon enabled, shadows, 8x filtering, the 60 FPS
+cap and running WebAudio with nine playing sources. The console and screenshot
+preview were hidden, and Focus game was invoked. Physical capture still fails
+in the embedded browser; right-button drag remains the fallback. The full-page
+restoration image shows 100 health and 23 FPS at that instant, not sustained
+60 FPS. Evidence is ignored `build-web/model-timing-restored-console.txt` and
+`C:/Users/allen/.codex/visualizations/2026/10/06/doom3-accuracy/model-timing-restored.jpg`.
+
+### Fused light-triangle bounds (2026-10-06)
+
+The web all-front-frustum, back-face-filtered light-triangle path now collects
+bounds while copying accepted indices. `R_FilterLightTrianglesWeb` keeps the
+original index/vertex order and `idBounds::AddPoint` comparisons. It scans an
+empty prefix before creating the bound accumulators, then uses a local bound
+object so output writes do not interfere with those accumulators. The fully
+referenced-index path and the partially clipped path keep their original bounds
+handling. Native filtering and bounds calculation retain their behavior. Unused
+local rejection counters were removed; they did not contribute to renderer
+statistics. No shadow setting, material, game tick or triangle selection changed.
+
+`tests/light_triangle_check.py` extracts the production helper, the original
+index loop, generic indexed `MinMax`, bound initialization and `AddPoint`.
+With production WebAssembly flags it passes 4,256 cases containing 1,886,528
+input faces. Comparisons require identical output indices and bound bits,
+unchanged inputs and intact output guards. Cases include empty, prefix, sparse
+and dense selections, nonzero facing bytes, repeated indices, signed zero,
+subnormals and extreme finite coordinates. A negative harness replacing the
+third output index with the second fails on its first accepted signed-zero
+case. Evidence is ignored `build-web/light-triangle-results.txt` and
+`light-triangle-negative-results.txt`; web CI runs the compiled check.
+
+The nine alternating sample medians below measure filtering/bounds only, with
+about three million input faces per timing batch. They do not measure game FPS.
+
+| Faces per mesh | Kept | Original | Fused | Fused/original |
+| ---: | ---: | ---: | ---: | ---: |
+| 32 | 0% | 3.682 ms | 2.335 ms | 0.634 |
+| 32 | 25% | 19.318 ms | 18.052 ms | 0.934 |
+| 32 | 50% | 38.665 ms | 38.030 ms | 0.984 |
+| 32 | 100% | 58.336 ms | 51.313 ms | 0.880 |
+| 256 | 0% | 3.365 ms | 2.748 ms | 0.817 |
+| 256 | 25% | 24.514 ms | 16.751 ms | 0.683 |
+| 256 | 50% | 35.542 ms | 26.409 ms | 0.743 |
+| 256 | 100% | 82.161 ms | 74.051 ms | 0.901 |
+| 2,048 | 0% | 5.228 ms | 2.811 ms | 0.538 |
+| 2,048 | 25% | 50.651 ms | 48.223 ms | 0.952 |
+| 2,048 | 50% | 91.133 ms | 92.368 ms | 1.014 |
+| 2,048 | 100% | 85.662 ms | 59.470 ms | 0.694 |
+
+Most measured pairs are faster; the 2,048-face/50% case is 1.4% slower in this
+sample. This does not establish a universal or whole-game speedup. Earlier
+direct-output and local-accumulator experiments had more pronounced empty or
+sparse regressions and were not adopted. Their ignored artifacts are
+`build-web/light-bounds-experiment*`, `light-bounds-local*` and
+`light-bounds-prefix*`.
+
+The profiler also counts created light-triangle inputs, accepted faces and
+builds using the fused bounds path, only during explicit samples. Its 25
+compiled accounting checks verify the new counters' warmup reset, frame
+denominators, subset count and inactive behavior along with the earlier timing
+checks. These counts identify how much of a live workload uses this optimization.
+
+Both the Windows RelWithDebInfo and final web engine builds pass. Build evidence
+is ignored `build-windows/light-triangles-final-build.log` and
+`build-web/light-triangles-final-build.log`. The final web build retains the
+existing `BTree.h` unused-variable warning. Fresh browser image comparisons and
+live before/after FPS measurements for this fused-bounds change remain pending;
+the earlier model-profiling image checks do not validate this later change.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,

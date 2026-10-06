@@ -37,6 +37,7 @@
 #include "sys/platform.h"
 #include "framework/Common.h"
 #include "renderer/tr_local.h"
+#include "renderer/WebRenderTiming.h"
 #include "renderer/qgl.h"
 static std::set<GLuint> g_depthTextures;
 static GLuint g_scratchIndexBuffer = 0;
@@ -51,10 +52,13 @@ struct webPerf_t {
 	bool warmup;
 	double started, cpu[600];
 	double asyncMs;
-	double phases[16];
+	double phases[WEB_RENDER_PHASE_COUNT];
+	unsigned int phaseCalls[WEB_RENDER_PHASE_COUNT];
 	unsigned int draws, indexQueries, programBinds, uniformUploads, bufferCreates;
 	unsigned int uniformWrites, bufferBinds, attribWrites;
 	unsigned int callbacks, skippedCallbacks;
+	double lightInputFaces, lightKeptFaces;
+	unsigned int lightTriangleBuilds, fusedBoundBuilds;
 };
 static webPerf_t g_webPerf = {};
 
@@ -68,10 +72,21 @@ extern "C" void R_GLES_PerfAsync( double cpuMs ) {
 	if (g_webPerf.remaining) g_webPerf.asyncMs += cpuMs;
 }
 extern "C" void R_GLES_PerfPhase( int phase, double cpuMs ) {
-	if (g_webPerf.remaining && phase >= 0 && phase < 16) g_webPerf.phases[phase] += cpuMs;
+	if (g_webPerf.remaining && phase >= 0 && phase < WEB_RENDER_PHASE_COUNT) {
+		g_webPerf.phases[phase] += cpuMs;
+		++g_webPerf.phaseCalls[phase];
+	}
 }
 extern "C" double R_GLES_PerfTimestamp() {
 	return g_webPerf.remaining ? emscripten_get_now() : 0;
+}
+
+extern "C" void R_GLES_PerfLightTriangles( int inputFaces, int keptFaces, bool fusedBounds ) {
+	if (!g_webPerf.remaining) return;
+	g_webPerf.lightInputFaces += inputFaces;
+	g_webPerf.lightKeptFaces += keptFaces;
+	++g_webPerf.lightTriangleBuilds;
+	if (fusedBounds) ++g_webPerf.fusedBoundBuilds;
 }
 
 static void GLES_Perf_f( const idCmdArgs &args ) {
@@ -91,7 +106,10 @@ void R_GLES_PerfFrame( double cpuMs ) {
 		g_webPerf.bufferCreates = 0;
 		g_webPerf.uniformWrites = g_webPerf.bufferBinds = g_webPerf.attribWrites = 0;
 		g_webPerf.callbacks = g_webPerf.skippedCallbacks = 0;
+		g_webPerf.lightInputFaces = g_webPerf.lightKeptFaces = 0;
+		g_webPerf.lightTriangleBuilds = g_webPerf.fusedBoundBuilds = 0;
 		memset(g_webPerf.phases, 0, sizeof(g_webPerf.phases));
+		memset(g_webPerf.phaseCalls, 0, sizeof(g_webPerf.phaseCalls));
 		return;
 	}
 	g_webPerf.cpu[g_webPerf.samples++] = cpuMs;
@@ -121,6 +139,15 @@ void R_GLES_PerfFrame( double cpuMs ) {
 		g_webPerf.phases[10] / frames, g_webPerf.phases[11] / frames, g_webPerf.phases[12] / frames);
 	common->Printf("Web perf: views %.2f ms models/interactions, %.2f ms prune/sort, %.2f ms subviews/demo/queue (nested subview time overlaps)\n",
 		g_webPerf.phases[13] / frames, g_webPerf.phases[14] / frames, g_webPerf.phases[15] / frames);
+	common->Printf("Web perf: model detail %.2f ms resolve/animate (%.1f calls), %.2f ms ambient surfaces (%.1f calls), %.2f ms active interactions (%.1f calls) per frame\n",
+		g_webPerf.phases[16] / frames, g_webPerf.phaseCalls[16] / frames,
+		g_webPerf.phases[17] / frames, g_webPerf.phaseCalls[17] / frames,
+		g_webPerf.phases[18] / frames, g_webPerf.phaseCalls[18] / frames);
+	common->Printf("Web perf: interaction builds %.2f ms (%.1f calls) per frame; active time includes builds and shadow-only model resolution\n",
+		g_webPerf.phases[19] / frames, g_webPerf.phaseCalls[19] / frames);
+	common->Printf("Web perf: light triangles %.1f input / %.1f kept per frame; %.1f builds (%.1f fused bounds)\n",
+		g_webPerf.lightInputFaces / frames, g_webPerf.lightKeptFaces / frames,
+		g_webPerf.lightTriangleBuilds / frames, g_webPerf.fusedBoundBuilds / frames);
 }
 
 static GLuint g_boundProgram = 0;

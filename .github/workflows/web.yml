@@ -40,6 +40,8 @@ on:
       - 'tests/test_bfg_beam_parity.py'
       - 'tests/shadow_cull_check.py'
       - 'tests/shadow_facing_check.py'
+      - 'tests/web_perf_check.py'
+      - 'tests/light_triangle_check.py'
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
       - 'tests/test_player_death_parity.py'
@@ -96,6 +98,8 @@ on:
       - 'tests/test_bfg_beam_parity.py'
       - 'tests/shadow_cull_check.py'
       - 'tests/shadow_facing_check.py'
+      - 'tests/web_perf_check.py'
+      - 'tests/light_triangle_check.py'
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
       - 'tests/test_player_death_parity.py'
@@ -204,6 +208,12 @@ jobs:
           python3 tests/shadow_facing_check.py build-web/shadow-facing-check.cpp
           em++ build-web/shadow-facing-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sENVIRONMENT=node -o build-web/shadow-facing-check.js
           node build-web/shadow-facing-check.js
+          python3 tests/web_perf_check.py build-web/web-perf-check.cpp
+          em++ build-web/web-perf-check.cpp -O3 -sENVIRONMENT=node -o build-web/web-perf-check.js
+          node build-web/web-perf-check.js
+          python3 tests/light_triangle_check.py build-web/light-triangle-check.cpp
+          em++ build-web/light-triangle-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sENVIRONMENT=node -o build-web/light-triangle-check.js
+          node build-web/light-triangle-check.js
           python3 tests/render_shader_check.py build-web/render-check.html
           python3 tests/test_gameplay_parity.py
           python3 tests/test_projectile_parity.py

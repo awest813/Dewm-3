@@ -38,28 +38,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/RenderWorld_local.h"
 
 #include "renderer/tr_local.h"
-
-#ifdef __EMSCRIPTEN__
-extern "C" double R_GLES_PerfTimestamp();
-extern "C" void R_GLES_PerfPhase( int phase, double cpuMs );
-
-// Clock reads are disabled outside an explicit webperf sample. Each view has
-// its own timer so recursive camera/mirror views cannot corrupt the parent.
-class webRenderPhase_t {
-	int phase;
-	double started;
-public:
-	explicit webRenderPhase_t(int initialPhase) : phase(initialPhase), started(R_GLES_PerfTimestamp()) {}
-	void Next(int nextPhase) {
-		if (!started) return;
-		double now = R_GLES_PerfTimestamp();
-		R_GLES_PerfPhase(phase, now - started);
-		phase = nextPhase;
-		started = now;
-	}
-	~webRenderPhase_t() { Next(-1); }
-};
-#endif
+#include "renderer/WebRenderTiming.h"
 
 //====================================================================
 
