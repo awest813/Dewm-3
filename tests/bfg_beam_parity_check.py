@@ -40,7 +40,7 @@ def beams(path):
     return rows
 
 
-def validate(beam_rows, target_rows):
+def validate(beam_rows, target_rows, removed_first=False):
     if len(target_rows) != 20 or [row['name'] for row in target_rows] != list(NAMES) * 10:
         raise ValueError('missing or unordered multi-target snapshots')
     base = target_rows[0]['frame']
@@ -48,22 +48,29 @@ def validate(beam_rows, target_rows):
         for target, row in enumerate(target_rows[phase*2:phase*2+2]):
             if row['frame'] != base + offset or row['time'] != row['frame'] * 16:
                 raise ValueError('multi-target timing changed')
-            if row['present'] != int(phase < 9):
+            expected_present = phase < 9 and not (removed_first and target == 1 and phase >= 5)
+            if row['present'] != int(expected_present):
                 raise ValueError('target removal was early or absent')
-            if phase == 9:
+            if not expected_present:
                 continue
             if row['definition'] != 'monster_zombie_maint' or row['hidden'] or not row['damageable']:
                 raise ValueError('wrong, hidden or nondamageable beam target')
             if phase < 6:
                 expected = (50, 50, 50, 50, 40, 30)[phase] if target == 1 else 50
+                if removed_first and target == 0 and phase == 5:
+                    expected = 40
                 if row['health'] != expected:
                     raise ValueError('stock first-target periodic damage order changed')
             elif row['health'] >= 0:
                 raise ValueError('BFG impact did not kill both targets')
-    for target in range(2):
+            elif removed_first and row['health'] != -360:
+                raise ValueError('surviving target impact damage changed')
+    for target in range(1 if removed_first else 2):
         impact, moving = target_rows[12+target], target_rows[14+target]
         if impact['origin'] == moving['origin'] or moving['velocity'] == (0, 0, 0):
             raise ValueError('both ragdolls must exhibit actual motion')
+    if removed_first and target_rows[16]['velocity'] != (0, 0, 0):
+        raise ValueError('surviving ragdoll did not settle')
     if len(beam_rows) != 7:
         raise ValueError('missing multi-target beam checkpoints')
     frame_offsets = (51, 71, 73, 93, 95, 117, 317)
@@ -77,16 +84,19 @@ def validate(beam_rows, target_rows):
             raise ValueError('two acquired targets on one BFG were not observed')
         if row['state'] != (2 if i < 4 else 4) or row['next_damage'] != launch_time + timers[i]:
             raise ValueError('BFG flight/impact or shared damage timer changed')
-        if [item['name'] for item in row['items']] != ['codex_beam_b', 'codex_beam_a']:
+        removed = removed_first and i >= 3
+        if [item['name'] for item in row['items']] != ['none' if removed else 'codex_beam_b', 'codex_beam_a']:
             raise ValueError('beam acquisition order changed')
-        if any(item['slot'] != slot or not item['present'] or item['visible'] != int(i < 4)
+        # Stock Think skips a null target without freeing its existing beam
+        # model; impact later frees both models. Preserve this native behavior.
+        if any(item['slot'] != slot or item['present'] != int(not (removed and slot == 0)) or item['visible'] != int(i < 4)
                for slot, item in enumerate(row['items'])):
             raise ValueError('beam presence or visibility cleanup changed')
 
 
-def compare(native_beams, web_beams, native_targets, web_targets):
-    validate(native_beams, native_targets)
-    validate(web_beams, web_targets)
+def compare(native_beams, web_beams, native_targets, web_targets, removed_first=False):
+    validate(native_beams, native_targets, removed_first)
+    validate(web_beams, web_targets, removed_first)
     if native_beams != web_beams:
         raise ValueError('native/web beam acquisition, state or timer differs')
     if native_targets != web_targets:
@@ -98,10 +108,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('native_log')
     parser.add_argument('web_log')
+    parser.add_argument('--removed-first', action='store_true',
+                        help='check removal of the first acquired target after its first pulse')
     args = parser.parse_args()
     compare_players(checkpoints(args.native_log), checkpoints(args.web_log), scenario='bfg-beam')
     compare_projectiles(projectiles(args.native_log), projectiles(args.web_log), scenario='bfg-beam')
     compare_clocks(clocks(args.native_log), clocks(args.web_log))
     beam_count, target_count = compare(beams(args.native_log), beams(args.web_log),
-                                      targets(args.native_log, True), targets(args.web_log, True))
+                                      targets(args.native_log, True), targets(args.web_log, True), args.removed_first)
     print(f'PASS: {beam_count} beam states and {target_count} exact target snapshots, with player/projectile/clock parity')

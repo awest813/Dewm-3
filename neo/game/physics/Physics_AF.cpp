@@ -5405,7 +5405,21 @@ void idPhysics_AF::Evolve( float timeStep ) {
 
 		// rotate world axis
 		body->next->worldAxis = body->current->worldAxis * rotation.ToMat3();
+		if ( traceRotation ) {
+			for ( int row = 0; row < 3; row++ ) {
+				const idVec3 &value = body->next->worldAxis[row];
+				gameLocal.Printf( "AF_WORLD_AXIS phase=raw entity=%d frame=%d body=%d row=%d value=(%.9g %.9g %.9g)\n",
+					self->entityNumber, gameLocal.framenum, i, row, value.x, value.y, value.z );
+			}
+		}
 		body->next->worldAxis.OrthoNormalizeSelf();
+		if ( traceRotation ) {
+			for ( int row = 0; row < 3; row++ ) {
+				const idVec3 &value = body->next->worldAxis[row];
+				gameLocal.Printf( "AF_WORLD_AXIS phase=normalized entity=%d frame=%d body=%d row=%d value=(%.9g %.9g %.9g)\n",
+					self->entityNumber, gameLocal.framenum, i, row, value.x, value.y, value.z );
+			}
+		}
 
 		// linear and angular friction
 		body->next->spatialVelocity.SubVec3(0) -= body->linearFriction * body->next->spatialVelocity.SubVec3(0);
@@ -5591,6 +5605,13 @@ void idPhysics_AF::CheckForCollisions( float timeStep ) {
 			TransposeMultiply( body->current->worldAxis, body->next->worldAxis, axis );
 			rotation = axis.ToRotation();
 			rotation.SetOrigin( body->current->worldOrigin );
+			const bool traceMotion = af_debugRotationEntity.GetInteger() == self->entityNumber &&
+				gameLocal.framenum == af_debugRotationFrame.GetInteger();
+			if ( traceMotion ) {
+				const idVec3 &vector = rotation.GetVec();
+				gameLocal.Printf( "AF_MOTION_INPUT entity=%d frame=%d body=%d angle=%.9g axis=(%.9g %.9g %.9g)\n",
+					self->entityNumber, gameLocal.framenum, i, rotation.GetAngle(), vector.x, vector.y, vector.z );
+			}
 
 			// if there was a collision
 			if ( gameLocal.clip.Motion( collision, body->current->worldOrigin, body->next->worldOrigin, rotation,
@@ -5599,6 +5620,15 @@ void idPhysics_AF::CheckForCollisions( float timeStep ) {
 				// set the next state to the state at the moment of impact
 				body->next->worldOrigin = collision.endpos;
 				body->next->worldAxis = collision.endAxis;
+				if ( traceMotion ) {
+					gameLocal.Printf( "AF_MOTION_HIT entity=%d frame=%d body=%d fraction=%.9g\n",
+						self->entityNumber, gameLocal.framenum, i, collision.fraction );
+					for ( int row = 0; row < 3; row++ ) {
+						const idVec3 &value = collision.endAxis[row];
+						gameLocal.Printf( "AF_WORLD_AXIS phase=collision entity=%d frame=%d body=%d row=%d value=(%.9g %.9g %.9g)\n",
+							self->entityNumber, gameLocal.framenum, i, row, value.x, value.y, value.z );
+					}
+				}
 
 				// add collision to the list
 				index = collisions.Num();

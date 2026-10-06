@@ -768,6 +768,30 @@ static void Cmd_TestEntityState_f( const idCmdArgs &args ) {
 		origin.x, origin.y, origin.z, velocity.x, velocity.y, velocity.z );
 }
 
+static idCVar g_debugPlayerAFFrame( "g_debugPlayerAFFrame", "-1", CVAR_GAME | CVAR_INTEGER | CVAR_CHEAT,
+	"testUsercmd frame for read-only player ragdoll body snapshots; -1 disables" );
+
+static void PrintPlayerAFReplayState( idPlayer *player, const char *phase ) {
+	const idPhysics *physics = player->GetPhysics();
+	if ( !physics->IsType( idPhysics_AF::Type ) ) {
+		return;
+	}
+	const idPhysics_AF *afPhysics = static_cast<const idPhysics_AF *>( physics );
+	for ( int i = 0; i < afPhysics->GetNumBodies(); i++ ) {
+		const idVec3 &origin = afPhysics->GetOrigin( i );
+		const idVec3 &linear = afPhysics->GetLinearVelocity( i );
+		const idVec3 &angular = afPhysics->GetAngularVelocity( i );
+		gameLocal.Printf( "PLAYER_AF_TRACE phase=%s frame=%d body=%d origin=(%.9g %.9g %.9g) linear=(%.9g %.9g %.9g) angular=(%.9g %.9g %.9g)\n",
+			phase, gameLocal.framenum, i, origin.x, origin.y, origin.z,
+			linear.x, linear.y, linear.z, angular.x, angular.y, angular.z );
+		const idMat3 &axis = afPhysics->GetAxis( i );
+		for ( int row = 0; row < 3; row++ ) {
+			gameLocal.Printf( "PLAYER_AF_AXIS phase=%s frame=%d body=%d row=%d value=(%.9g %.9g %.9g)\n",
+				phase, gameLocal.framenum, i, row, axis[row].x, axis[row].y, axis[row].z );
+		}
+	}
+}
+
 // Developer-only, bounded input replay for comparing the real simulation on
 // different platforms. It advances the loaded world; reload the test save/map
 // afterward. It deliberately does not bypass cinematics or change physics cvars.
@@ -807,10 +831,13 @@ static void Cmd_TestUsercmd_f( const idCmdArgs &args ) {
 	}
 	int startTime = gameLocal.time;
 	for (int i = 0; i < values[0]; ++i) {
+		const bool tracePlayerAF = gameLocal.framenum + 1 == g_debugPlayerAFFrame.GetInteger();
+		if ( tracePlayerAF ) PrintPlayerAFReplayState( player, "begin" );
 		cmd.gameFrame = gameLocal.framenum + 1;
 		cmd.gameTime = gameLocal.time + USERCMD_MSEC;
 		cmd.sequence++;
 		gameReturn_t ret = gameLocal.RunFrame(commands);
+		if ( tracePlayerAF ) PrintPlayerAFReplayState( player, "end" );
 		if (ret.sessionCommand[0] || gameLocal.inCinematic) {
 			gameLocal.Printf("testUsercmd: stopped after %d ticks at a session/cinematic transition\n", i+1);
 			return;

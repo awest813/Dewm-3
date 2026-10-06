@@ -293,7 +293,16 @@ idRotation idMat3::ToRotation( void ) const {
 		r.vec[j]	= ( mat[ j ][ i ] + mat[ i ][ j ] ) * s;
 		r.vec[k]	= ( mat[ k ][ i ] + mat[ i ][ k ] ) * s;
 	}
+#ifdef __EMSCRIPTEN__
+	// Keep quaternion angle reconstruction accurate near identity. Web acosf
+	// can lose a float bit here, which changes collision axes and ragdoll motion.
+	// Retain ACos's endpoint clamps and leave the native conversion unchanged.
+	r.angle = r.angle > -1.0f && r.angle < 1.0f
+		? static_cast<float>( acos( static_cast<double>( r.angle ) ) )
+		: idMath::ACos( r.angle );
+#else
 	r.angle = idMath::ACos( r.angle );
+#endif
 	if ( idMath::Fabs( r.angle ) < 1e-10f ) {
 		r.vec.Set( 0.0f, 0.0f, 1.0f );
 		r.angle = 0.0f;

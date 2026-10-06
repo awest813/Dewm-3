@@ -1835,11 +1835,116 @@ Both beams are visible during flight, but only the first acquired target takes
 the two periodic pulses (50 to 40 to 30 health). This follows the stock shared
 timer update inside the target loop; gameplay behavior was preserved. Both
 targets die on impact and exhibit ragdoll motion before eventual removal.
-Native self-validation checks fixture coverage only: the new multi-target
-native/web comparison remains pending. It does not establish changing occlusion,
-enemy pursuit, or full combat fidelity. Evidence: ignored
-`build-windows/bfg-multi-beam-native/full-console.txt`. Native and web builds
-compiled and linked with the read-only snapshots.
+The browser replay now matches all seven beam states and twenty target snapshots
+exactly, including entity indices, health and serialized physics values. All
+twelve player and projectile snapshots and ten clock/frame/random-seed
+checkpoints also match. Both ragdolls move, but target A is still moving at the
+recovery checkpoint; this fixture does not prove that both settle.
+Evidence: ignored `build-windows/bfg-multi-beam-native/full-console.txt` and
+`build-web/bfg-multi-beam-console.txt`. Native and web builds compiled and linked
+with the read-only snapshots.
+
+`tests/bfg_removed_beam_parity.cfg` removes the first acquired target after its
+first periodic pulse. The second target then receives the next pulse (50 to 40)
+and impact reduces it to -360. Its ragdoll moves, settles and is removed; the
+projectile also completes its stock delayed cleanup. All seven beam states,
+twenty target snapshots, twelve player and projectile snapshots and ten
+clock/frame/seed checkpoints match between native and web. Use
+`tests/bfg_beam_parity_check.py --removed-first` for this fixture. Negative
+regressions reject absent surviving-target damage, a retained target reference,
+changed impact damage and missing settling even when supplied logs agree.
+Evidence: ignored `build-windows/bfg-removed-beam-native/full-console.txt` and
+`build-web/bfg-removed-beam-console.txt`.
+
+Stock Think skips a null target without freeing its beam model. The snapshot
+therefore reports a missing target with a visible model until impact frees both
+models. This native behavior is preserved; these state comparisons do not
+establish pixel fidelity for the retained beam. Changing occlusion, enemy
+pursuit, full combat and campaign coverage remain open.
+
+QuickSave is restored at 1263.77/-1501/68.25, yaw 180, with 100 health. Readbacks
+confirm normal timing/input, shadows enabled and the 60 FPS cap. Audio was
+enabled and the developer console hidden. Physical capture still fails in the
+embedded browser; right-button drag remains available. Evidence: ignored
+`build-web/bfg-beam-restored-console.txt` and
+`C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/bfg-multi-restored.jpg`.
+
+### Stock enemy pursuit and melee audit (2026-10-05)
+
+`tests/combat_pursuit_parity.cfg` spawns a stock maintenance zombie at
+-190/-2190/16 after the player settles at the Mars City 2 start. It retains
+stock AI, AAS navigation, animation attacks, normal skill and dynamic protection.
+There are no notarget, forced-enemy, damage, weapon-fire or door commands.
+An earlier distant placement produced movement without player damage and was
+rejected as player-combat coverage. The accepted fixture ends after ragdoll
+settling, before the later game-over session transition interrupts replay.
+
+Native and browser both observe actual pursuit, the monster's combat state,
+melee knockback and player health 100/100/100/72/30/-12/-12. The player releases
+the weapon on death and its ragdoll moves and settles. All six serialized zombie
+physics snapshots, six AI state records, seven empty player-projectile snapshots
+and seven game/render clock/frame/random-seed checkpoints match exactly.
+Evidence: ignored `build-windows/combat-accepted-native/full-console.txt` and
+`build-web/combat-pursuit-console.txt`.
+
+The initial full encounter comparison failed: the settled player ragdoll origin
+differs by 0.002198 map units, exceeding the existing 0.001 movement tolerance.
+`tests/combat_parity_check.py` preserves that tolerance and rejects this replay.
+Its asset-free regressions reject absent pursuit, damage, death, knockback,
+weapon release, settling, AI combat state and clock coverage even when both
+logs agree. Matching damage and AI state do not prove full combat fidelity.
+
+A 300-frame, one-tick replay first records a player velocity difference at
+frame 868, after matching visible player checkpoints through frame 867.
+The opt-in `g_debugPlayerAFFrame` now reports all eleven player ragdoll bodies
+and axes before and after one testUsercmd frame. It defaults to -1 and performs
+no tracing during ordinary gameplay. Native and web compile/link successfully;
+the diagnostic preserves every serialized encounter checkpoint on each platform.
+
+At frame 867, all 44 body/axis records match before simulation, and all 44
+integration rotation input/matrix records match. After simulation, body 2's
+axis[0][0] differs by one float bit (-0.105215073 native, -0.105215065 web).
+At frame 868, differences reach all 44 body/axis records. This narrows further
+investigation to orientation construction/normalization and collision axis
+handling after the matching integration rotation. Evidence: ignored `build-windows/combat-micro-native/full-console.txt`,
+`build-web/combat-micro-console.txt`,
+`build-windows/combat-af{,867}-native/full-console.txt`,
+`build-web/combat-af{,867}-console.txt` and `combat-af-first-difference.txt`.
+
+All 61 relevant Python regressions and eight browser launcher groups pass.
+QuickSave is restored with 100 health, normal timing/input, audio and shadows,
+the 60 FPS cap, and all newly enabled diagnostics reset to -1. Physical capture,
+sustained combat 60 FPS, other enemy/weapon encounters and campaign/material
+coverage remain open. Evidence: ignored `build-web/combat-restored-console.txt`
+and `C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/combat-audit-restored.jpg`.
+
+The subsequent orientation audit found identical matrix products and normalized
+axes, followed by a one-bit difference in the quaternion angle reconstructed by
+`idMat3::ToRotation`: native 5.62849379 degrees, web 5.62849331. The web `acosf`
+rounding changes the collision end axis and then spreads through the ragdoll.
+The web conversion now evaluates the inverse cosine in double precision before
+converting to float, retaining the existing endpoint clamps. Native conversion
+and the shared `idMath::ACos` helper remain unchanged. A broader helper change
+was rejected because other inputs differed from the native results.
+
+`tests/web_rotation_check.py` extracts the actual conversion and math helpers.
+Ten MSVC-measured matrix fixtures cover the observed drift, identity, an endpoint
+clamp, all diagonal branches and signed rotations. All forty angle/axis values
+match exactly in native and production-flag WebAssembly checks. Reverting the
+web correction fails the observed-drift case; this is not exhaustive coverage
+of every rotation input. The fixtures and compiled check are included in web CI.
+
+With the rebuilt engine, all serialized evidence in the stock combat fixture
+now matches exactly: seven player checkpoints, six targets, AI state, projectiles
+and clock/seed checkpoints. All 213 selected orientation diagnostic records also
+match. The verifier retains its original 0.001 movement tolerance. Both BFG
+fixtures were rerun and still match seven beam states and twenty target snapshots
+each, plus player/projectile/clock evidence. Logs are ignored:
+`build-web/combat-quaternion-fixed-console.txt`,
+`build-web/bfg-multi-quaternion-fixed-console.txt` and
+`build-web/bfg-removed-quaternion-fixed-console.txt`. Native and web engine builds,
+61 relevant Python regressions and eight launcher groups pass. These fixtures
+do not establish full campaign, rendering or sustained 60 FPS accuracy.
 
 ## 10. Files added for web
 

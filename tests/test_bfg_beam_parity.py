@@ -31,6 +31,33 @@ def fixture():
 
 
 class BFGBeamParityTests(unittest.TestCase):
+    def removed_fixture(self):
+        rows, targets = fixture()
+        for phase in range(5, 9):
+            targets[phase*2+1] = {key: targets[phase*2+1][key] for key in ('name', 'frame', 'time')}
+            targets[phase*2+1]['present'] = 0
+            targets[phase*2]['health'] = 40 if phase == 5 else -360
+        for row in rows[3:]:
+            row['items'][0].update(name='none', present=0)
+        return rows, targets
+
+    def test_removed_target_and_surviving_pulse(self):
+        rows, targets = self.removed_fixture()
+        self.assertEqual(compare(rows, rows, targets, targets, removed_first=True), (7, 20))
+        for mutation in (
+            lambda b, t: t[10].update(health=50),
+            lambda b, t: t[11].update(present=1),
+            lambda b, t: b[3]['items'][0].update(present=1),
+            lambda b, t: b[3]['items'][0].update(visible=0),
+            lambda b, t: t[12].update(health=-350),
+            lambda b, t: t[16].update(velocity=(1., 0., 0.)),
+        ):
+            with self.subTest(mutation=mutation):
+                rows, targets = self.removed_fixture()
+                mutation(rows, targets)
+                with self.assertRaises(ValueError):
+                    compare(rows, rows, targets, targets, removed_first=True)
+
     def test_complete_fixture(self):
         rows, targets = fixture()
         self.assertEqual(compare(rows, copy.deepcopy(rows), targets, copy.deepcopy(targets)), (7, 20))
