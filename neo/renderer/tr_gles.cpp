@@ -51,7 +51,7 @@ struct webPerf_t {
 	bool warmup;
 	double started, cpu[600];
 	double asyncMs;
-	double phases[10];
+	double phases[16];
 	unsigned int draws, indexQueries, programBinds, uniformUploads, bufferCreates;
 	unsigned int uniformWrites, bufferBinds, attribWrites;
 };
@@ -61,7 +61,10 @@ extern "C" void R_GLES_PerfAsync( double cpuMs ) {
 	if (g_webPerf.remaining) g_webPerf.asyncMs += cpuMs;
 }
 extern "C" void R_GLES_PerfPhase( int phase, double cpuMs ) {
-	if (g_webPerf.remaining && phase >= 0 && phase < 10) g_webPerf.phases[phase] += cpuMs;
+	if (g_webPerf.remaining && phase >= 0 && phase < 16) g_webPerf.phases[phase] += cpuMs;
+}
+extern "C" double R_GLES_PerfTimestamp() {
+	return g_webPerf.remaining ? emscripten_get_now() : 0;
 }
 
 static void GLES_Perf_f( const idCmdArgs &args ) {
@@ -103,6 +106,10 @@ void R_GLES_PerfFrame( double cpuMs ) {
 		g_webPerf.phases[4] / frames, g_webPerf.phases[5] / frames, g_webPerf.phases[6] / frames);
 	common->Printf("Web perf: %.2f ms backend, %.2f ms triangle cleanup, %.2f ms vertex-cache cleanup\n",
 		g_webPerf.phases[7] / frames, g_webPerf.phases[8] / frames, g_webPerf.phases[9] / frames);
+	common->Printf("Web perf: views %.2f ms setup, %.2f ms visibility, %.2f ms lights\n",
+		g_webPerf.phases[10] / frames, g_webPerf.phases[11] / frames, g_webPerf.phases[12] / frames);
+	common->Printf("Web perf: views %.2f ms models/interactions, %.2f ms prune/sort, %.2f ms subviews/demo/queue (nested subview time overlaps)\n",
+		g_webPerf.phases[13] / frames, g_webPerf.phases[14] / frames, g_webPerf.phases[15] / frames);
 }
 
 static GLuint g_boundProgram = 0;
@@ -2224,6 +2231,10 @@ static void GLES_InitAnisotropy( EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context ) {
 void R_GLES_InitConfig( void ) {
 	// WebGL2 guarantees: 8+ texture image units, cube maps, NPOT, stencil8.
 	// Depth-bounds and debug output are absent.
+	// The desktop extension path is skipped, including its stencil setup.
+	// GL_ZERO would erase the volume count instead of tracking crossings.
+	tr.stencilIncr = GL_INCR_WRAP;
+	tr.stencilDecr = GL_DECR_WRAP;
 	glConfig.multitextureAvailable = true;
 	glConfig.maxTextureUnits = 8;
 	glConfig.maxTextureCoords = 8;

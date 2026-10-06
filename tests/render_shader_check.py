@@ -14,12 +14,22 @@ shaders = {}
 for name, body in re.findall(r'static const char \*(GLES_[VF]S_\w+)\s*=\s*((?:"(?:\\.|[^"\\])*"|//[^\n]*|\s)+);', source):
     shaders[name] = ''.join(ast.literal_eval(s) for s in re.findall(r'"(?:\\.|[^"\\])*"', body))
 
+# Exercise the operations selected by the actual WebGL initialization path.
+# Missing initialization must fail generation rather than silently use defaults.
+config = source[source.index('void R_GLES_InitConfig( void ) {'):]
+stencil_ops = []
+for field in ('stencilIncr', 'stencilDecr'):
+    match = re.search(r'tr\.' + field + r'\s*=\s*GL_(\w+)\s*;', config)
+    if not match:
+        raise ValueError('WebGL initialization does not set tr.' + field)
+    stencil_ops.append(match.group(1))
+
 page = r'''<!doctype html><meta charset="utf-8"><title>Doom 3 rendering checks</title>
 <style>body{background:#111827;color:#e5e7eb;font:16px system-ui;padding:24px}pre{white-space:pre-wrap}</style>
 <h1>Doom 3 rendering checks</h1><canvas id="gpu" width="1" height="1"></canvas><pre id="report">Running…</pre>
 <script>
 const s=SHADERS, report=document.querySelector('#report');
-const gl=document.querySelector('#gpu').getContext('webgl2',{antialias:false});
+const gl=document.querySelector('#gpu').getContext('webgl2',{antialias:false,depth:true,stencil:true});
 let count=0, lines=[];
 function assert(ok,msg){if(!ok)throw Error(msg);count++;lines.push('PASS '+msg);}
 function shader(type,code){const x=gl.createShader(type);gl.shaderSource(x,code);gl.compileShader(x);
@@ -47,6 +57,24 @@ try{
  for(const name of ['INTERACTION','SHADOW','FLAT','ENV','BUMPYENV','SOFT','GLASS','SKY','COLORPROCESS','HEAT']){
   program(s.GLES_VS_HEAD+s['GLES_VS_'+name],s.GLES_FS_HEAD+s['GLES_FS_'+name]);assert(true,name+' shaders compile and link');
  }
+ const stencilOps=STENCIL_OPS.map(name=>gl[name]);
+ assert(gl.getParameter(gl.STENCIL_BITS)>=8,'shadow counting has an eight-bit stencil attachment');
+ program('#version 300 es\nvoid main(){'+triangle+'}', '#version 300 es\nprecision highp float;out vec4 o_col;void main(){o_col=vec4(1);}');
+ gl.enable(gl.STENCIL_TEST);gl.stencilMask(255);gl.clearDepth(0);
+ function volumeCrossing(initial,operation,expected,label){
+  gl.clearStencil(initial);gl.clear(gl.STENCIL_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LESS);gl.colorMask(false,false,false,false);
+  gl.stencilFunc(gl.ALWAYS,0,255);gl.stencilOp(gl.KEEP,operation,gl.KEEP);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  gl.disable(gl.DEPTH_TEST);gl.colorMask(true,true,true,true);
+  gl.stencilFunc(gl.EQUAL,expected,255);gl.stencilOp(gl.KEEP,gl.KEEP,gl.KEEP);
+  pixel([255,255,255,255],label);
+ }
+ volumeCrossing(128,stencilOps[0],129,'z-fail back crossing increments the shadow count');
+ volumeCrossing(129,stencilOps[1],128,'z-fail front crossing restores the shadow count');
+ volumeCrossing(255,stencilOps[0],0,'overlapping shadow count wraps instead of saturating');
+ volumeCrossing(0,stencilOps[1],255,'reverse shadow crossing wraps below zero');
+ gl.disable(gl.STENCIL_TEST);gl.clearDepth(1);gl.clearStencil(0);
  const shadowVS=s.GLES_VS_SHADOW.replace('gl_Position = u_mvp * pos;', 'testPosition = gl_Position = u_mvp * pos;');
  let shadow=program(s.GLES_VS_HEAD+'out vec4 testPosition;\n'+shadowVS,s.GLES_FS_HEAD+s.GLES_FS_SHADOW,['testPosition']);
  const feedback=gl.createBuffer();gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER,feedback);
@@ -198,5 +226,5 @@ try{
  assert(gl.getError()===gl.NO_ERROR,'no WebGL errors');report.textContent=count+' checks passed\n'+lines.join('\n');
 }catch(e){report.textContent='FAILED: '+e.message+'\n'+lines.join('\n');}
 </script>'''
-Path(sys.argv[1]).write_text(page.replace('SHADERS', json.dumps(shaders)), encoding='utf-8')
+Path(sys.argv[1]).write_text(page.replace('SHADERS', json.dumps(shaders)).replace('STENCIL_OPS', json.dumps(stencil_ops)), encoding='utf-8')
 print(f'Wrote {sys.argv[1]} ({len(shaders)} shader sources)')

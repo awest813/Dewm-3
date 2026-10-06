@@ -1628,6 +1628,117 @@ disabled. The web build completes successfully with both feedback changes.
 These feedback states are regression-tested; live browser verification of the
 updated feedback remains open.
 
+### Raw hangar PNG comparison (2026-10-05)
+
+The rebuilt launcher now completes Copy image in the embedded browser. Its
+successful clipboard result supplied real PNG bytes for all three frozen
+hangar views. Captures explicitly use `webscreenshot 640 480`; the launcher
+Screenshot button otherwise follows the physical canvas size (813x610 here).
+An initial comparison with the FPS overlay enabled was rejected and repeated
+with `com_showFPS 0` and `com_asyncInput 0`, matching the native fixture.
+
+All three camera readbacks and recorded clocks/frames/seeds match the native
+fixture. RGB mean absolute errors on the 0–255 scale are 0.160769 (rails),
+0.932836 (stairs) and 1.048218 (saved rail). Pixels whose largest channel
+difference exceeds 16 comprise 0.132487%, 0.646159% and 0.905273%, respectively.
+These are measurements, not acceptance thresholds. Visual inspection shows
+different shadow coverage around the stairs and floor despite the small global
+averages; graphics parity remains incomplete. Next isolate the shadow pass
+with matched shadows-on/off captures before changing renderer code.
+
+Evidence is ignored `build-web/render-hangar/{rails-raw,stairs-raw,saved-rail-raw}.png`,
+`raw-console.txt` and `raw-metrics.json`, compared with the native world PNGs
+listed above. Screenshot copy success was verified live; the pending-feedback
+branch remains covered by regression tests rather than this successful copy.
+QuickSave and normal timing, HUD, weapon, input and audio settings were restored.
+Physical pointer capture still reports WrongDocumentError in the embedded
+browser. Moving-camera fidelity and sustained combat performance remain open.
+
+### Stencil-shadow initialization diagnosis (2026-10-05)
+
+Matched shadows-on/off native captures were taken at the same three frozen
+hangar checkpoints. The pre-fix browser PNGs are byte-for-byte identical in
+pixel data with shadows enabled and disabled. Against native shadows-off,
+their RGB mean errors fall to 0.101566, 0.196066 and 0.271367; native shadows-on
+retains the larger errors above. Thus the missing shadow coverage is not merely
+a PNG export or screenshot overlay problem.
+
+The WebGL branch of `R_CheckPortableExtensions` returns after
+`R_GLES_InitConfig`, bypassing desktop initialization of `tr.stencilIncr` and
+`tr.stencilDecr`. Both remain zero (`GL_ZERO`), erasing stencil values instead
+of counting volume crossings. The WebGL configuration now explicitly assigns
+core WebGL2 `GL_INCR_WRAP` and `GL_DECR_WRAP` on every initialization.
+The hangar fixture explicitly selects normal shadow/debug controls.
+
+The actual GPU regression page reads those assignments from renderer source
+and exercises depth-failing crossings in an eight-bit stencil buffer. All
+86 GPU checks pass, including increment, decrement, overflow and underflow.
+A negative page using the old zero operations fails the first crossing test.
+The existing compiled renderer-state harness also passes all 98 checks.
+Evidence: ignored `build-web/stencil-gpu-checks.txt`,
+`build-web/stencil-zero-negative-checks.txt`,
+`build-windows/render-shadow-isolation/full-console.txt` and
+`build-web/render-hangar/shadows-off-console.txt`.
+
+The rebuilt engine passes the same licensed-data three-view audit. Native/web
+clocks, frames and seeds still match exactly. Shadows now change all three
+browser images, restoring the missing stair/floor coverage. RGB mean errors
+against native shadows-on fall from 0.160769/0.932836/1.048218 to
+0.100183/0.185637/0.250479. Pixels with any channel difference above 16 fall
+to 0.013997%/0.060872%/0.073242%. The native and browser mean shadow effects
+(on versus off) are 0.060560/0.060586, 0.753503/0.755038 and 0.795219/0.810457.
+Remaining differences are not declared acceptable merely because the global
+mean is small; broader material, moving-camera and campaign audits remain open.
+
+Evidence: ignored `build-web/stencil-init-build.log` (successful compile/link),
+`build-web/render-hangar/stencil-fixed/{rails,stairs,saved-rail}-{on,off}.png`,
+`console.txt`, `metrics.json` and reproducible `compare-stencil.py` in its parent
+directory. The native comparison uses the paired isolation captures above.
+
+QuickSave was restored without a positioning command (saved view
+1263.77/-1501/68.25, yaw 180), with normal simulation, input, view effects,
+HUD/weapon and audio. A 180-frame stationary sample with the 60 FPS cap, Ultra
+textures, 8x filtering and shadows enabled measures 50.9 FPS, CPU mean 17.51 ms
+and p95 24.72 ms. Draw work averages 13.59 ms (8.01 ms scene generation,
+5.57 ms submission/cleanup); session work averages 2.79 ms. This is a short
+stationary sample, not proof of sustained movement/combat performance. The
+restored shadow rendering must be preserved during subsequent optimization.
+Evidence: ignored `build-web/render-hangar/stencil-fixed/restored-perf-console.txt`
+and `C:/Users/allen/.codex/visualizations/2026/10/05/doom3-accuracy/stencil-shadow-fix-restored.jpg`.
+
+### Scene-generation profiling expansion (2026-10-05)
+
+A second 300-frame stationary sample with working shadows measures 51.7 FPS,
+CPU mean 17.70 ms and p95 24.15 ms. Scene generation averages 7.88 ms and
+backend work 6.17 ms. Evidence: ignored `build-web/view-perf-before-console.txt`.
+These measurements reflect this machine's current workload; during the next
+build only about 500 MB of 16 GB physical memory was free. The game tab was
+temporarily replaced with the small GPU-check page to release game-data memory
+during linking. No unrelated process was stopped.
+
+`webperf` now splits view generation into matrix/frustum setup, portal
+visibility, light surfaces, models/interactions, prune/sort and subviews/demo
+recording/draw-queue work. Each recursive view owns its timer, including early
+returns. Nested subview time overlaps the parent's subview measurement and
+must not be summed as mutually exclusive categories. Clock reads occur only
+during an explicit sample. The instrumentation is web-only and changes no
+rendering or simulation policy; it is diagnostic work, not a performance gain.
+
+The instrumented web build compiles and links successfully. Its frozen 640x480
+saved-rail PNG is pixel-identical to the prior fixed-shadow build (largest
+channel change zero), and all three native game/render clocks, frames and
+seeds still match. Evidence: ignored `build-web/view-perf-build.log`,
+`build-web/view-perf/saved-rail.png`, `image-check.txt` and `frozen-console.txt`.
+
+The instrumented 300-frame sample measures 35.2 FPS, CPU mean 19.10 ms and
+p95 29.76 ms. View work averages 0.01 ms setup, 0.15 ms visibility, 0.67 ms
+lights, 6.78 ms models/interactions, 0.12 ms prune/sort and 0.01 ms
+subviews/demo/queue. Models/interactions are the largest measured frontend
+cost and the next optimization target. These samples were taken under varying
+machine load and do not establish a performance change from instrumentation.
+Sustained 60 FPS remains unverified. Evidence: ignored
+`build-web/view-perf/profile-console.txt`.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,

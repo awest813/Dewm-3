@@ -39,6 +39,28 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "renderer/tr_local.h"
 
+#ifdef __EMSCRIPTEN__
+extern "C" double R_GLES_PerfTimestamp();
+extern "C" void R_GLES_PerfPhase( int phase, double cpuMs );
+
+// Clock reads are disabled outside an explicit webperf sample. Each view has
+// its own timer so recursive camera/mirror views cannot corrupt the parent.
+class webRenderPhase_t {
+	int phase;
+	double started;
+public:
+	explicit webRenderPhase_t(int initialPhase) : phase(initialPhase), started(R_GLES_PerfTimestamp()) {}
+	void Next(int nextPhase) {
+		if (!started) return;
+		double now = R_GLES_PerfTimestamp();
+		R_GLES_PerfPhase(phase, now - started);
+		phase = nextPhase;
+		started = now;
+	}
+	~webRenderPhase_t() { Next(-1); }
+};
+#endif
+
 //====================================================================
 
 /*
@@ -1108,6 +1130,10 @@ void R_RenderView( viewDef_t *parms ) {
 
 	tr.sortOffset = 0;
 
+#ifdef __EMSCRIPTEN__
+	webRenderPhase_t webViewTimer(10);
+#endif
+
 	// set the matrix for world space to eye space
 	R_SetViewMatrix( tr.viewDef );
 
@@ -1118,6 +1144,9 @@ void R_RenderView( viewDef_t *parms ) {
 	// we need to set the projection matrix before doing
 	// portal-to-screen scissor box calculations
 	R_SetupProjection( tr.viewDef );
+#ifdef __EMSCRIPTEN__
+	webViewTimer.Next(11);
+#endif
 
 	// identify all the visible portalAreas, and the entityDefs and
 	// lightDefs that are in them and pass culling.
@@ -1125,21 +1154,33 @@ void R_RenderView( viewDef_t *parms ) {
 
 	// constrain the view frustum to the view lights and entities
 	R_ConstrainViewFrustum();
+#ifdef __EMSCRIPTEN__
+	webViewTimer.Next(12);
+#endif
 
 	// make sure that interactions exist for all light / entity combinations
 	// that are visible
 	// add any pre-generated light shadows, and calculate the light shader values
 	R_AddLightSurfaces();
+#ifdef __EMSCRIPTEN__
+	webViewTimer.Next(13);
+#endif
 
 	// adds ambient surfaces and create any necessary interaction surfaces to add to the light
 	// lists
 	R_AddModelSurfaces();
+#ifdef __EMSCRIPTEN__
+	webViewTimer.Next(14);
+#endif
 
 	// any viewLight that didn't have visible surfaces can have it's shadows removed
 	R_RemoveUnecessaryViewLights();
 
 	// sort all the ambient surfaces for translucency ordering
 	R_SortDrawSurfs();
+#ifdef __EMSCRIPTEN__
+	webViewTimer.Next(15);
+#endif
 
 	// generate any subviews (mirrors, cameras, etc) before adding this view
 	if ( R_GenerateSubViews() ) {
