@@ -482,6 +482,124 @@ float idSoundWorldLocal::CurrentShakeAmplitudeForPosition( const int time, const
 	return amp;
 }
 
+#ifdef __EMSCRIPTEN__
+/*
+Emscripten's OpenAL applies every listener and source parameter to WebAudio
+nodes in JavaScript; a listener change also revisits every source. The mixer
+resends unchanged values for the listener and each playing channel on every
+update. AL state is plain state, so a write equal to the last value written
+for that source (or listener) has no effect and is skipped. The caches are
+dropped when the current context changes, and a source's entry when a source
+with that name is generated (WebAl_ForgetSource).
+*/
+struct webAlSourceCache_t {
+	ALuint source;
+	ALint relative, looping;
+	ALfloat position[3], gain, referenceDistance, maxDistance, pitch;
+	unsigned int valid;
+};
+enum {
+	WEB_AL_RELATIVE = 1, WEB_AL_LOOPING = 2, WEB_AL_POSITION = 4, WEB_AL_GAIN = 8,
+	WEB_AL_REFERENCE = 16, WEB_AL_MAX = 32, WEB_AL_PITCH = 64
+};
+static webAlSourceCache_t webAlSources[256];
+static struct {
+	ALCcontext *context;
+	bool valid;
+	ALfloat gain, position[3], orientation[6];
+} webAlListener;
+
+static void WebAl_CheckContext( void ) {
+	ALCcontext *context = alcGetCurrentContext();
+	if ( context != webAlListener.context ) {
+		memset( webAlSources, 0, sizeof( webAlSources ) );
+		webAlListener.context = context;
+		webAlListener.valid = false;
+	}
+}
+
+void WebAl_ForgetSource( ALuint source ) {
+	webAlSourceCache_t &entry = webAlSources[source & 255];
+	if ( entry.source == source ) {
+		memset( &entry, 0, sizeof( entry ) );
+	}
+}
+
+static webAlSourceCache_t &WebAl_Source( ALuint source ) {
+	webAlSourceCache_t &entry = webAlSources[source & 255];
+	if ( entry.source != source ) {
+		memset( &entry, 0, sizeof( entry ) );
+		entry.source = source;
+	}
+	return entry;
+}
+
+static void WebAl_Sourcei( ALuint source, ALenum param, ALint value ) {
+	webAlSourceCache_t &entry = WebAl_Source( source );
+	if ( param != AL_SOURCE_RELATIVE && param != AL_LOOPING ) {
+		alSourcei( source, param, value );
+		return;
+	}
+	unsigned int bit = param == AL_SOURCE_RELATIVE ? WEB_AL_RELATIVE : WEB_AL_LOOPING;
+	ALint &cached = param == AL_SOURCE_RELATIVE ? entry.relative : entry.looping;
+	if ( ( entry.valid & bit ) && cached == value ) {
+		return;
+	}
+	alSourcei( source, param, value );
+	cached = value;
+	entry.valid |= bit;
+}
+
+static void WebAl_Sourcef( ALuint source, ALenum param, ALfloat value ) {
+	webAlSourceCache_t &entry = WebAl_Source( source );
+	unsigned int bit;
+	ALfloat *cached;
+	switch ( param ) {
+	case AL_GAIN: bit = WEB_AL_GAIN; cached = &entry.gain; break;
+	case AL_REFERENCE_DISTANCE: bit = WEB_AL_REFERENCE; cached = &entry.referenceDistance; break;
+	case AL_MAX_DISTANCE: bit = WEB_AL_MAX; cached = &entry.maxDistance; break;
+	case AL_PITCH: bit = WEB_AL_PITCH; cached = &entry.pitch; break;
+	default: alSourcef( source, param, value ); return;
+	}
+	if ( ( entry.valid & bit ) && *cached == value ) {
+		return;
+	}
+	alSourcef( source, param, value );
+	*cached = value;
+	entry.valid |= bit;
+}
+
+static void WebAl_SourcePosition( ALuint source, ALfloat x, ALfloat y, ALfloat z ) {
+	webAlSourceCache_t &entry = WebAl_Source( source );
+	if ( ( entry.valid & WEB_AL_POSITION ) && entry.position[0] == x && entry.position[1] == y && entry.position[2] == z ) {
+		return;
+	}
+	alSource3f( source, AL_POSITION, x, y, z );
+	entry.position[0] = x;
+	entry.position[1] = y;
+	entry.position[2] = z;
+	entry.valid |= WEB_AL_POSITION;
+}
+
+static void WebAl_Listener( ALfloat gain, const ALfloat *position, const ALfloat *orientation ) {
+	WebAl_CheckContext();
+	if ( !webAlListener.valid || webAlListener.gain != gain ) {
+		alListenerf( AL_GAIN, gain );
+		webAlListener.gain = gain;
+	}
+	if ( position && ( !webAlListener.valid || memcmp( webAlListener.position, position, sizeof( webAlListener.position ) ) ) ) {
+		alListenerfv( AL_POSITION, position );
+		memcpy( webAlListener.position, position, sizeof( webAlListener.position ) );
+	}
+	if ( orientation && ( !webAlListener.valid || memcmp( webAlListener.orientation, orientation, sizeof( webAlListener.orientation ) ) ) ) {
+		alListenerfv( AL_ORIENTATION, orientation );
+		memcpy( webAlListener.orientation, orientation, sizeof( webAlListener.orientation ) );
+	}
+	// Position and orientation are written together on every update.
+	webAlListener.valid = position != NULL;
+}
+#endif
+
 /*
 ===================
 idSoundWorldLocal::MixLoop
@@ -500,7 +618,15 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 
 	// if noclip flying outside the world, leave silence
 	if ( listenerArea == -1 ) {
+#ifdef __EMSCRIPTEN__
+		WebAl_CheckContext();
+		if ( !webAlListener.valid || webAlListener.gain != 0.0f ) {
+			alListenerf( AL_GAIN, 0.0f );
+			webAlListener.gain = 0.0f;
+		}
+#else
 		alListenerf( AL_GAIN, 0.0f );
+#endif
 		return;
 	}
 
@@ -521,9 +647,13 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 	listenerOrientation[4] =  listenerAxis[2].z;
 	listenerOrientation[5] = -listenerAxis[2].x;
 
+#ifdef __EMSCRIPTEN__
+	WebAl_Listener( 1.0f, listenerPosition, listenerOrientation );
+#else
 	alListenerf( AL_GAIN, 1.0f );
 	alListenerfv( AL_POSITION, listenerPosition );
 	alListenerfv( AL_ORIENTATION, listenerOrientation );
+#endif
 
 	if (idSoundSystemLocal::useEFXReverb && soundSystemLocal.efxloaded) {
 		ALuint effect = 0;
@@ -1847,6 +1977,12 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			}
 
 			// update source parameters
+#ifdef __EMSCRIPTEN__
+			// MixLoop validated the cache context before mixing any channel.
+#define alSourcei WebAl_Sourcei
+#define alSourcef WebAl_Sourcef
+#define alSource3f( source, param, x, y, z ) WebAl_SourcePosition( source, x, y, z )
+#endif
 			if ( global || omni ) {
 				alSourcei( chan->openalSource, AL_SOURCE_RELATIVE, AL_TRUE);
 				alSource3f( chan->openalSource, AL_POSITION, 0.0f, 0.0f, 0.0f );
@@ -1865,6 +2001,11 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 			alSourcef( chan->openalSource, AL_MAX_DISTANCE, maxd );
 #endif
 			alSourcef( chan->openalSource, AL_PITCH, ( slowmoActive && !chan->disallowSlow ) ? ( slowmoSpeed ) : ( 1.0f ) );
+#ifdef __EMSCRIPTEN__
+#undef alSourcei
+#undef alSourcef
+#undef alSource3f
+#endif
 
 			if (idSoundSystemLocal::useEFXReverb) {
 				if (enviroSuitActive) {

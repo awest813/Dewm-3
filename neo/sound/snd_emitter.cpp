@@ -225,7 +225,9 @@ idSoundChannel::ALStop
 ===================
 */
 void idSoundChannel::ALStop( void ) {
-	if ( alIsSource( openalSource ) ) {
+	// Freed channels hold source 0, which is never a source name; skip the
+	// query (a JavaScript call on the web) for every idle channel per update.
+	if ( openalSource != 0 && alIsSource( openalSource ) ) {
 		alSourceStop( openalSource );
 		alSourcei( openalSource, AL_BUFFER, 0 );
 		// unassociate effect slot from source, so the effect slot can be deleted on shutdown

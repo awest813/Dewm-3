@@ -1221,8 +1221,14 @@ sysEvent_t Sys_GetEvent() {
 
 		case SDL_KEYDOWN:
 			if (ev.key.keysym.sym == SDLK_RETURN && (ev.key.keysym.mod & KMOD_ALT) > 0) {
+#ifdef __EMSCRIPTEN__
+				// The page owns browser fullscreen (r_webFullscreen); a video
+				// restart cannot leave or enter it.
+				cvarSystem->SetCVarBool("r_webFullscreen", !cvarSystem->GetCVarBool("r_webFullscreen"));
+#else
 				cvarSystem->SetCVarBool("r_fullscreen", !renderSystem->IsFullScreen());
 				PushConsoleEvent("vid_restart partial");
+#endif
 				return res_none;
 			}
 

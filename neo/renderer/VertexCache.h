@@ -141,6 +141,15 @@ private:
 											// staticHeaders.next is most recently used
 
 	int				frameBytes;				// for each of NUM_VERTEX_FRAMES frames
+
+#ifdef __EMSCRIPTEN__
+	// WebGL: each frame-temp upload is a separate browser call. Stage the
+	// bytes in memory and upload the written range once, before first use.
+	void			WebFlushFrameTemp( const vertCache_t *block );
+	byte *			webTempStaging[NUM_VERTEX_FRAMES];
+	int				webTempDirtyStart[NUM_VERTEX_FRAMES];
+	int				webTempDirtyEnd[NUM_VERTEX_FRAMES];
+#endif
 };
 
 extern	idVertexCache	vertexCache;

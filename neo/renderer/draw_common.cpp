@@ -30,9 +30,40 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/VertexCache.h"
 
 #include "renderer/tr_local.h"
+#include "renderer/WebRenderTiming.h"
 
 extern idCVar r_useCarmacksReverse;
 extern idCVar r_useStencilOpSeparate;
+#ifdef __EMSCRIPTEN__
+static idCVar r_webSkipUnusedDepthCopy( "r_webSkipUnusedDepthCopy", "1", CVAR_RENDERER | CVAR_BOOL,
+	"skip the _currentDepth copy for views that never sample it" );
+
+// True if a surface of the view can sample _currentDepth: a soft particle,
+// or a stage (including custom-program stages) that names the image.
+static bool RB_WebViewReadsDepth( const viewDef_t *view ) {
+	const idImage *depth = globalImages->currentDepthImage;
+	for ( int i = 0; i < view->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = view->drawSurfs[i];
+		if ( surf->particle_radius > 0.0f ) {
+			return true;
+		}
+		const idMaterial *material = surf->material;
+		for ( int s = 0; material && s < material->GetNumStages(); s++ ) {
+			const shaderStage_t *stage = material->GetStage( s );
+			if ( stage->texture.image == depth ) {
+				return true;
+			}
+			const newShaderStage_t *custom = stage->newStage;
+			for ( int n = 0; custom && n < custom->numFragmentProgramImages; n++ ) {
+				if ( custom->fragmentProgramImages[n] == depth ) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+#endif
 
 /*
 =====================
@@ -560,9 +591,20 @@ void RB_STD_FillDepthBuffer( drawSurf_t **drawSurfs, int numDrawSurfs ) {
 	// Make the early depth pass available to shaders. #3877
 	bool getDepthCapture = r_enableDepthCapture.GetInteger() == 1
 		|| (r_enableDepthCapture.GetInteger() == -1 && r_useSoftParticles.GetBool());
+#ifdef __EMSCRIPTEN__
+	// Automatic mode copies depth for soft particles. A view with no surface
+	// that can read _currentDepth skips the copy; any view that reads it
+	// still refreshes it before drawing.
+	if ( getDepthCapture && r_enableDepthCapture.GetInteger() == -1 && r_webSkipUnusedDepthCopy.GetBool() ) {
+		getDepthCapture = RB_WebViewReadsDepth( backEnd.viewDef );
+	}
+#endif
 
 	if ( getDepthCapture && backEnd.viewDef->renderView.viewID >= 0 ) // Suppress for lightgem rendering passes
 	{
+#ifdef __EMSCRIPTEN__
+		R_GLES_GpuPass( WEB_GPU_DEPTH_COPY );
+#endif
 		globalImages->currentDepthImage->CopyDepthbuffer( backEnd.viewDef->viewport.x1,
 														  backEnd.viewDef->viewport.y1,
 														  backEnd.viewDef->viewport.x2 - backEnd.viewDef->viewport.x1 + 1,
@@ -1459,6 +1501,9 @@ void RB_StencilShadowPass( const drawSurf_t *drawSurfs ) {
 	if ( !drawSurfs ) {
 		return;
 	}
+#ifdef __EMSCRIPTEN__
+	R_GLES_GpuPass( WEB_GPU_SHADOWS );
+#endif
 
 	globalImages->BindNull();
 	qglDisableClientState( GL_TEXTURE_COORD_ARRAY );
@@ -1949,6 +1994,9 @@ void	RB_STD_DrawView( void ) {
 
 	// fill the depth buffer and clear color buffer to black except on
 	// subviews
+#ifdef __EMSCRIPTEN__
+	R_GLES_GpuPass( WEB_GPU_DEPTH_FILL );
+#endif
 	RB_STD_FillDepthBuffer( drawSurfs, numDrawSurfs );
 
 	// main light renderer
@@ -1965,16 +2013,29 @@ void	RB_STD_DrawView( void ) {
 	RB_STD_LightScale();
 
 	// now draw any non-light dependent shading passes
+#ifdef __EMSCRIPTEN__
+	R_GLES_GpuPass( WEB_GPU_SHADER_PASSES );
+#endif
 	int	processed = RB_STD_DrawShaderPasses( drawSurfs, numDrawSurfs );
 
 	// fob and blend lights
+#ifdef __EMSCRIPTEN__
+	R_GLES_GpuPass( WEB_GPU_FOG_BLEND );
+#endif
 	RB_STD_FogAllLights();
 
 	// now draw any post-processing effects using _currentRender
 	if ( processed < numDrawSurfs ) {
+#ifdef __EMSCRIPTEN__
+		R_GLES_GpuPass( WEB_GPU_POST_PROCESS );
+#endif
 		RB_STD_DrawShaderPasses( drawSurfs+processed, numDrawSurfs-processed );
 	}
 
 	RB_RenderDebugTools( drawSurfs, numDrawSurfs );
+#ifdef __EMSCRIPTEN__
+	R_GLES_DumpDrawSurfs( backEnd.viewDef );
+	R_GLES_GpuPass( WEB_GPU_OTHER );
+#endif
 
 }

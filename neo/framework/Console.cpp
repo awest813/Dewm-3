@@ -194,7 +194,37 @@ SCR_DrawFPS
 ==================
 */
 #define	FPS_FRAMES	4
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+// Browser frames are capped to the display refresh. Whole-millisecond times
+// averaged over four frames make a locked 60 FPS read 59 to 62; time 30
+// frames with the browser's sub-millisecond clock instead.
+static float SCR_DrawWebFPS( float y ) {
+	static const int WEB_FPS_FRAMES = 30;
+	static double previousTimes[WEB_FPS_FRAMES];
+	static double previous;
+	static int index;
+	const double t = emscripten_get_now();
+	previousTimes[index % WEB_FPS_FRAMES] = t - previous;
+	previous = t;
+	index++;
+	if ( index > WEB_FPS_FRAMES ) {
+		double total = 0;
+		for ( int i = 0; i < WEB_FPS_FRAMES; i++ ) {
+			total += previousTimes[i];
+		}
+		const int fps = total > 0 ? idMath::FtoiFast( 1000.0f * WEB_FPS_FRAMES / (float)total + 0.5f ) : 0;
+		const char *s = va( "%ifps", fps );
+		const int w = strlen( s ) * BIGCHAR_WIDTH;
+		renderSystem->DrawBigStringExt( 635 - w, idMath::FtoiFast( y ) + 2, s, colorWhite, true, localConsole.charSetShader );
+	}
+	return y + BIGCHAR_HEIGHT + 4;
+}
+#endif
 float SCR_DrawFPS( float y ) {
+#ifdef __EMSCRIPTEN__
+	return SCR_DrawWebFPS( y );
+#endif
 	char		*s;
 	int			w;
 	static int	previousTimes[FPS_FRAMES];

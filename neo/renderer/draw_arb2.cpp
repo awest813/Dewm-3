@@ -30,6 +30,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/VertexCache.h"
 
 #include "renderer/tr_local.h"
+#include "renderer/WebRenderTiming.h"
 
 // DG: if this is defined, the soft particle shaders will be compiled into the executable
 //  otherwise soft_particle.vfp will be opened as a file just like the other shaders
@@ -152,6 +153,9 @@ void	RB_ARB2_CreateDrawInteractions( const drawSurf_t *surf ) {
 	if ( !surf ) {
 		return;
 	}
+#ifdef __EMSCRIPTEN__
+	R_GLES_GpuPass( WEB_GPU_INTERACTIONS );
+#endif
 
 #ifdef __EMSCRIPTEN__
 	// Tell the GLES backend these draws genuinely use the interaction

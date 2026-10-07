@@ -108,6 +108,16 @@ documentListeners.get('mousemove')({ target: context.canvas, clientX: 112, clien
 assert.deepEqual(Array.from(engineCalls.at(-1)[3]), [5, 5, 667, 500], 'later motion uses the previous drag point');
 documentListeners.get('mouseup')({ target: {}, button: 2, stopPropagation() {} });
 assert.equal(context.dragLooking, false, 'releasing outside the canvas stops drag look');
+// A click whose press reached the game keeps its release, wherever the browser
+// delivers it (fullscreen transitions retarget mouseup to the page root).
+let blocked = false;
+documentListeners.get('mousedown')({ target: context.canvas, button: 0, stopPropagation() { blocked = true; } });
+assert.equal(blocked, false, 'a game press reaches SDL');
+documentListeners.get('mouseup')({ target: { tagName: 'HTML' }, button: 0, stopPropagation() { blocked = true; } });
+assert.equal(blocked, false, 'its release reaches SDL even when retargeted to the page');
+blocked = false;
+documentListeners.get('mouseup')({ target: { tagName: 'BUTTON' }, button: 0, stopPropagation() { blocked = true; } });
+assert.equal(blocked, true, 'a page click without a game press stays away from SDL');
 documentListeners.get('mousedown')({ target: context.canvas, button: 2,
   preventDefault() {}, stopPropagation() {} });
 windowListeners.get('blur')();
@@ -184,9 +194,12 @@ for (const tagName of ['SELECT', 'SUMMARY']) {
 }
 context.savesReady = true;
 context.document.getElementById('graphics-controls').disabled = false;
-let graphicsValues = [1, 0, 0, 1, 1.5, 1.2, 60, 8], graphicsWrites = [], filteringLimit = 16;
+let graphicsValues = [1, 0, 0, 1, 1.5, 1.2, 60, 8, 1, 0.75], graphicsWrites = [], filteringLimit = 16;
+let displayRefresh = 0, lockedRefreshes = {};
 context.Module.ccall = (name, result, types, args) => {
   if (name === 'Web_GetTextureFilteringLimit') return filteringLimit;
+  if (name === 'Web_GetDisplayRefresh') return displayRefresh;
+  if (name === 'Web_GetLockedRefreshes') return lockedRefreshes[args[0]] || 0;
   if (name === 'Web_GetGraphicsOption') return graphicsValues[args[0]];
   if (name === 'Web_SetGraphicsOption') {
     graphicsWrites.push([...args]); graphicsValues[args[0]] = args[1]; return 1;
@@ -196,6 +209,7 @@ context.Module.ccall = (name, result, types, args) => {
 context.readGraphics();
 assert.equal(elements.get('graphics-bump').checked, true, 'normal-map control inverts skipBump');
 assert.equal(elements.get('graphics-specular').checked, true);
+assert.equal(elements.get('graphics-showfps').checked, true, 'frame rate counter reads com_showFPS');
 assert.equal(elements.get('graphics-gamma').value, 1.5, 'read current engine values');
 elements.get('graphics-gamma').value = 'invalid';
 context.applyGraphics(false);
@@ -223,7 +237,58 @@ context.applyGraphics(false);
 assert.equal(graphicsWrites.length, 0, 'invalid frame rates cannot partially apply graphics');
 assert.equal(context.focusedElement, 'graphics-fps');
 context.applyGraphics(true);
-assert.deepEqual(graphicsValues, [1, 0, 0, 1, 1, 1, 60, 8], 'restore only graphics defaults with 60 FPS and 8x filtering');
+assert.deepEqual(graphicsValues, [1, 0, 0, 1, 1, 1, 60, 8, 0, 1], 'restore only graphics defaults with 60 FPS, 8x filtering, no counter and full resolution');
+// Render resolution: validated before any write, then applied to the pixel
+// ratio SDL reads when it sizes the drawing buffer.
+graphicsWrites = [];
+elements.get('graphics-scale').value = '0.6';
+context.applyGraphics(false);
+assert.equal(graphicsWrites.length, 0, 'unsupported render resolutions cannot partially apply graphics');
+assert.equal(context.focusedElement, 'graphics-scale');
+elements.get('graphics-scale').value = '0.5';
+context.applyGraphics(false);
+assert.equal(graphicsValues[9], 0.5, 'render resolution reaches the engine');
+let resizes = 0;
+context.window.dispatchEvent = event => { if (event.type === 'resize') ++resizes; };
+context.window.devicePixelRatio = 2;
+context.Module.setRenderScale(0.5);
+assert.equal(context.window.devicePixelRatio, 1, 'half resolution halves the ratio SDL reads');
+assert.equal(resizes, 1, 'SDL is asked to resize the drawing buffer');
+context.Module.setRenderScale(0.5);
+assert.equal(resizes, 1, 'an unchanged scale does not resize again');
+context.Module.setRenderScale(3);
+assert.equal(context.window.devicePixelRatio, 2, 'invalid scales fall back to full resolution');
+context.Module.setRenderScale(0.75);
+assert.equal(context.window.devicePixelRatio, 1.5);
+context.Module.setRenderScale(1);
+delete context.window.dispatchEvent;
+elements.get('graphics-showfps').checked = true;
+context.applyGraphics(false);
+assert.equal(graphicsValues[8], 1, 'frame rate counter reaches the engine');
+// The frame-rate explanation follows the refresh the engine measures.
+assert.match(context.frameRateStatus(60), /Measuring/, 'refresh unknown before callbacks');
+displayRefresh = 59.94; lockedRefreshes = { 30: 2, 60: 1 };
+assert.match(context.frameRateStatus(60), /^60 FPS is locked to every refresh of this 60 Hz display\.$/);
+assert.match(context.frameRateStatus(30), /each frame lasts 2 refreshes of this 60 Hz display/);
+assert.match(context.frameRateStatus(0), /Unlocked renders every refresh of this 60 Hz display/);
+displayRefresh = 144; lockedRefreshes = {};
+assert.match(context.frameRateStatus(60), /144 Hz display is not a multiple of 60 FPS.*Unlocked may look smoother/);
+displayRefresh = 30.01; lockedRefreshes = { 30: 1 };
+assert.match(context.frameRateStatus(60), /60 FPS is not reachable here\. The browser is delivering about 30 frames per second; battery/);
+assert.match(context.frameRateStatus(30), /^30 FPS is locked to every refresh of this 30 Hz display\. The browser is delivering/);
+// The achieved rate, with advice when the applied cap is not being met.
+let renderedRate = 0;
+const statusCcall = context.Module.ccall;
+context.Module.ccall = (name, result, types, args) => name === 'Web_GetRenderedFrameRate' ? renderedRate : statusCcall(name, result, types, args);
+assert.equal(context.renderedRateStatus(60), '', 'nothing rendered yet: no rate');
+renderedRate = 59.6;
+assert.equal(context.renderedRateStatus(60), ' The game is rendering about 60 FPS.');
+renderedRate = 41.2;
+assert.match(context.renderedRateStatus(60), /about 41 FPS\. For steadier motion, choose a lower render resolution or 30 FPS\.$/);
+renderedRate = 24;
+assert.match(context.renderedRateStatus(30), /about 24 FPS\. For steadier motion, choose a lower render resolution\.$/);
+assert.equal(context.renderedRateStatus(0), ' The game is rendering about 24 FPS.', 'unlocked has no target to miss');
+context.Module.ccall = statusCcall;
 for (const level of [1, 2, 4, 8, 16]) {
   elements.get('graphics-filtering').value = String(level);
   context.applyGraphics(false);
@@ -592,4 +657,87 @@ async function checkMouseLinkCopy() {
   assert.equal(button.disabled, false, 'clipboard rejection permits retry and manual copy');
   console.log('Web mouse-link recovery regressions passed.');
 }
-checkMouseLinkCopy().then(checkScreenshotCopy).then(checkFolderRecovery).catch(error => { console.error(error); process.exitCode = 1; });
+// SIMD release builds explain a browser without WebAssembly SIMD instead of
+// reporting a generic engine stop.
+function checkSimdMessage() {
+  const shell = { ...context, WebAssembly: undefined, location: { search: '' } };
+  vm.createContext(shell);
+  vm.runInContext(source, shell);
+  shell.Module.onAbort('CompileError');
+  assert.match(elements.get('status').textContent, /lacks WebAssembly SIMD/);
+  const capable = { ...context, WebAssembly, location: { search: '' } };
+  vm.createContext(capable);
+  vm.runInContext(source, capable);
+  capable.Module.onAbort('abort');
+  assert.match(elements.get('status').textContent, /^The game engine stopped\./);
+  console.log('Web SIMD capability message regression passed.');
+}
+// Fullscreen: the canvas goes fullscreen from the button or an engine request,
+// the shell reports the browser's actual state back, and Esc is kept for the
+// game where the Keyboard Lock API allows it.
+async function checkFullscreen() {
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const shell = { ...context, location: { search: '' } };
+  vm.createContext(shell);
+  vm.runInContext(source, shell);
+  const doc = shell.document, canvas = elements.get('canvas'), button = elements.get('fullscreen');
+  const reports = [];
+  let keys = null, requests = 0;
+  shell.navigator = { keyboard: { lock(list) { keys = list; return Promise.resolve(); }, unlock() { keys = 'unlocked'; } } };
+  shell.Module.ccall = (name, result, types, args) => { if (name === 'Web_SetFullscreenState') reports.push(args[0]); };
+  shell.runtimeReady = shell.started = true;
+  doc.fullscreenEnabled = true;
+  const rootClasses = {};
+  doc.documentElement = { classList: { toggle(name, on) { rootClasses[name] = on; } } };
+  canvas.requestFullscreen = options => { ++requests; assert.equal(options.navigationUI, 'hide'); return Promise.resolve(); };
+  doc.exitFullscreen = () => { doc.fullscreenElement = null; return Promise.resolve(); };
+  assert.equal(shell.fullscreenSupported(), true);
+  elementListeners.get('fullscreen:click')();
+  assert.equal(requests, 1, 'the button requests fullscreen for the canvas');
+  doc.fullscreenElement = canvas;
+  documentListeners.get('fullscreenchange')();
+  documentListeners.get('webkitfullscreenchange')();
+  assert.equal(button.textContent, 'Exit fullscreen');
+  assert.equal(button.attributes['aria-pressed'], undefined, 'the changing label alone states the action');
+  assert.deepEqual(reports, [1], 'one report per change even when prefixed events repeat it');
+  assert.equal(rootClasses['game-fullscreen'], true, 'page scrollbar is hidden behind the fullscreen game');
+  await tick();
+  assert.deepEqual([...keys], ['Escape'], 'Esc is kept for the game while fullscreen');
+  assert.match(elements.get('fullscreen-status').textContent, /Hold Esc to leave/);
+  shell.Module.setFullscreen(true);
+  assert.equal(requests, 1, 'an engine request matching the current state only confirms it');
+  assert.deepEqual(reports, [1, 1]);
+  shell.Module.setFullscreen(false);
+  assert.equal(doc.fullscreenElement, null, 'menu, console or Alt+Enter can leave fullscreen');
+  documentListeners.get('fullscreenchange')();
+  assert.equal(button.textContent, 'Fullscreen');
+  assert.equal(keys, 'unlocked');
+  assert.equal(rootClasses['game-fullscreen'], false);
+  assert.deepEqual(reports, [1, 1, 0]);
+  canvas.requestFullscreen = () => Promise.reject(new Error('no user activation'));
+  shell.Module.setFullscreen(true);
+  await tick();
+  assert.match(elements.get('fullscreen-status').textContent, /blocked/);
+  assert.equal(reports[reports.length - 1], 0, 'a blocked request resets the engine setting');
+  const blockedReports = reports.length;
+  documentListeners.get('fullscreenerror')();
+  documentListeners.get('webkitfullscreenerror')();
+  assert.equal(reports.length, blockedReports, 'one refusal reported once, whichever events announce it');
+  shell.Module.setFullscreen(true);
+  await tick();
+  assert.equal(reports.length, blockedReports + 1, 'a second refused attempt is reported again');
+  // A lock granted after fullscreen already ended is released again.
+  let releaseLock;
+  shell.navigator.keyboard.lock = () => new Promise(resolve => { releaseLock = resolve; });
+  canvas.requestFullscreen = () => Promise.resolve();
+  doc.fullscreenElement = canvas; documentListeners.get('fullscreenchange')();
+  doc.fullscreenElement = null; documentListeners.get('fullscreenchange')();
+  keys = 'locked-late'; releaseLock(); await tick();
+  assert.equal(keys, 'unlocked', 'late keyboard lock is released after leaving fullscreen');
+  doc.fullscreenEnabled = false;
+  shell.Module.setFullscreen(true);
+  assert.match(elements.get('fullscreen-status').textContent, /cannot show the game fullscreen/);
+  delete doc.documentElement; delete doc.fullscreenEnabled; delete doc.exitFullscreen; delete doc.fullscreenElement; delete canvas.requestFullscreen;
+  console.log('Web fullscreen regressions passed.');
+}
+checkMouseLinkCopy().then(checkScreenshotCopy).then(checkFolderRecovery).then(checkSimdMessage).then(checkFullscreen).catch(error => { console.error(error); process.exitCode = 1; });

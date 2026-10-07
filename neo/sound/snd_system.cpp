@@ -548,6 +548,9 @@ void idSoundSystemLocal::Init() {
 
 				// initialise sources
 				alSourcef( handle, AL_ROLLOFF_FACTOR, 0.0f );
+#ifdef __EMSCRIPTEN__
+				WebAl_ForgetSource( handle );
+#endif
 
 				// found one source
 				openalSourceCount++;

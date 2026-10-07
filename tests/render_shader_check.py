@@ -90,6 +90,27 @@ try{
  shadowPosition([7,8,9,1],1,[19,30,43,1],'GPU shadow near vertex matches ordinary MVP');
  shadowPosition([7,8,9,0],1,[6,30,32,0],'GPU shadow infinite vertex matches CPU extrusion and MVP');
  shadowPosition([3,10,8,0],0,[6,30,32,0],'private CPU shadow avoids a second extrusion');
+ // The interaction shader receives vertex program.env[4..17] as one array;
+ // each texgen row, light projection and color term must keep its engine slot.
+ const env=[];for(let k=0;k<18;k++)env.push([k+1,(k%5)-2,k*.5,3-k*.25]);
+ const dot=(a,b)=>a.reduce((t,x,i)=>t+x*b[i],0);
+ const inter=program(s.GLES_VS_HEAD+s.GLES_VS_INTERACTION,s.GLES_FS_HEAD+s.GLES_FS_INTERACTION,['v_bump','v_diff','v_spec','v_lproj','v_col','v_L']);
+ // A cube and a 2D sampler may not share a unit, even with rasterization off.
+ ['u_cube','u_bump','u_fall','u_proj','u_diff','u_spec','u_spectab'].forEach((n,i)=>gl.uniform1i(gl.getUniformLocation(inter,n),i));
+ gl.uniform4fv(gl.getUniformLocation(inter,'u_ienv'),new Float32Array(env.slice(4,18).flat()));
+ gl.uniformMatrix4fv(gl.getUniformLocation(inter,'u_mvp'),false,new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]));
+ const tc=[5,7,0,1],pos=[1,2,3,1],col=[.5,.25,1,2];
+ gl.vertexAttrib4fv(0,pos);gl.vertexAttrib4fv(1,tc);gl.vertexAttrib4fv(2,col);
+ gl.vertexAttrib4fv(3,[0,0,1,0]);gl.vertexAttrib4fv(4,[1,0,0,0]);gl.vertexAttrib4fv(5,[0,1,0,0]);
+ const interFeedback=gl.createBuffer();gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER,interFeedback);
+ gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER,68,gl.STREAM_READ);gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,interFeedback);
+ gl.enable(gl.RASTERIZER_DISCARD);gl.beginTransformFeedback(gl.POINTS);gl.drawArrays(gl.POINTS,0,1);gl.endTransformFeedback();gl.disable(gl.RASTERIZER_DISCARD);
+ const interGot=new Float32Array(17);gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER,0,interGot);
+ const interWant=[dot(tc,env[10]),dot(tc,env[11]),dot(tc,env[12]),dot(tc,env[13]),dot(tc,env[14]),dot(tc,env[15]),
+  dot(pos,env[6]),dot(pos,env[7]),dot(pos,env[8]),dot(pos,env[9]),...col.map((c,i)=>c*env[16][i]+env[17][i]),...[0,1,2].map(i=>env[4][i]-pos[i])];
+ assert(interWant.every((v,i)=>Math.abs(interGot[i]-v)<=1e-4*Math.max(1,Math.abs(v))),
+  'packed interaction environment keeps engine slots 4 and 6-17 ['+[...interGot]+']');
+ gl.vertexAttrib4fv(1,[0,0,0,1]);gl.vertexAttrib4fv(2,[1,1,1,1]);
  gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,null);gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER,null);
  let p=program('#version 300 es\nvoid main(){'+triangle+'}',s.GLES_FS_HEAD+'out vec4 o_col;uniform float a;void main(){if(!alphaPass(a))discard;o_col=vec4(1);}');
  for(let f=512;f<=519;f++)for(const a of [.25,.5,.75]){
@@ -113,13 +134,26 @@ try{
  uniform(p,'testL',[-1,0,0]);pixel([0,0,0,255],'back-facing normal rejects diffuse light');
  uniform(p,'testL',[1,0,0]);uniform(p,'u_diffCol',[0,0,0,0]);uniform(p,'u_specCol',[1,1,1,1]);pixel([64,64,64,255],'specular table response and engine factor two');
  uniform(p,'testL',[-1,0,0]);uniform(p,'u_specCol',[1,0,0,1]);pixel([0,0,0,255],'back-facing light cannot leak a red specular highlight');
- p=program('#version 300 es\nprecision highp float;out vec2 v_tc;out vec4 v_col,v_gen0,v_gen1;void main(){'+triangle+'v_tc=vec2(.5);v_col=vec4(.25,.5,.75,1);v_gen0=v_gen1=vec4(0);}',s.GLES_FS_HEAD+s.GLES_FS_FLAT);
+ uniform(p,'testL',[1,0,0]);uniform(p,'u_diffCol',[1,1,1,1]);uniform(p,'u_specCol',[0,0,0,0]);
+ texture(p,'u_fall',2,[255,0,128,255]);pixel([64,0,96,255],'interaction multiplies the whole falloff texel like interaction.vfp');
+ texture(p,'u_fall',2,[255,255,255,255]);
+ p=program('#version 300 es\nprecision highp float;out vec2 v_tc;out vec4 v_col,v_gen0,v_gen1;void main(){'+triangle+'v_tc=vec2(.5);v_col=vec4(.25,.5,.75,1);v_gen0=v_gen1=vec4(.5,.5,0,1);}',s.GLES_FS_HEAD+s.GLES_FS_FLAT);
  uniform(p,'u_gamma',[1,1,1,1]);uniform(p,'u_flatColor',[.5,.5,.5,1]);uniform(p,'u_useVtx',[1]);texture(p,'u_tex0',0,[255,255,255,255]);texture(p,'u_tex1',1,[255,255,255,255]);
  pixel([32,64,96,255],'material tint multiplies vertex color');uniform(p,'u_inverseVtx',[1]);pixel([96,64,32,255],'inverse vertex RGB retains material tint');
  uniform(p,'u_useVtx',[0]);uniform(p,'u_flatColor',[-1,.125,2,1]);uniform(p,'u_gamma',[2,2,2,.5]);
  pixel([0,128,255,255],'ambient gamma clamps negative and overbright channels before square root');
  uniform(p,'u_flatColor',[.25,.5,.75,1]);uniform(p,'u_gamma',[1,1,1,2]);
  pixel([16,64,143,255],'ambient gamma retains native power response below saturation');
+ // Fixed-function color is clamped: material "rgb 5" adds the texture once.
+ uniform(p,'u_gamma',[1,1,1,1]);uniform(p,'u_useVtx',[0]);uniform(p,'u_flatColor',[5,5,5,1]);texture(p,'u_tex0',0,[64,128,192,255]);
+ pixel([64,128,192,255],'overbright stage color saturates like the fixed-function current color');
+ // Blend lights: projected texture (unit 0) and falloff (unit 1) both
+ // MODULATE the current color, alpha included (RB_BlendLight).
+ uniform(p,'u_gamma',[1,1,1,1]);uniform(p,'u_flatColor',[1,.5,1,.5]);uniform(p,'u_texgenMode',[2]);uniform(p,'u_secondTexgen',[1]);
+ texture(p,'u_tex0',0,[255,255,128,128]);texture(p,'u_tex1',1,[128,255,255,255]);
+ pixel([128,128,128,64],'blend light modulates projected and falloff color and alpha');
+ uniform(p,'u_secondTexgen',[0]);pixel([255,128,128,64],'projected stage without falloff keeps texture alpha');
+ uniform(p,'u_texgenMode',[0]);
  p=program(s.GLES_VS_HEAD+s.GLES_VS_ENV,s.GLES_FS_HEAD+s.GLES_FS_ENV);
  gl.uniformMatrix4fv(gl.getUniformLocation(p,'u_mvp'),false,new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]));
  uniform(p,'u_eyeLocal',[0,0,100,1]);uniform(p,'u_gamma',[1,1,1,1]);uniform(p,'u_useVtx',[1]);

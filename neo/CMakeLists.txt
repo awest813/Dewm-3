@@ -327,6 +327,16 @@ if(EMSCRIPTEN)
 		add_compile_options(-pthread)
 		add_link_options(-pthread -sPTHREAD_POOL_SIZE=4)
 	endif()
+	# WebAssembly SIMD lets the compiler vectorize independent float lanes.
+	# It does not reassociate or contract floating-point math (no fast-math,
+	# -ffp-contract=off), so results match the scalar build; the native and
+	# web parity fixtures gate this setting.
+	option(WEB_SIMD "Compile the web build with WebAssembly SIMD (-msimd128)" OFF)
+	if(WEB_SIMD)
+		message(STATUS "WEB_SIMD enabled: -msimd128")
+		add_compile_options(-msimd128)
+		add_link_options(-msimd128)
+	endif()
 	add_compile_options(-sUSE_SDL=2)
 	add_definitions(-D__EMSCRIPTEN__)
 	message(STATUS "Emscripten/web build: HARDLINK_GAME=ON, SDL2+OpenAL via emscripten ports, CURL/backtrace/X11 disabled")
@@ -1359,6 +1369,10 @@ else()
 		sys/posix/posix_main.cpp
 		sys/linux/main.cpp
 	)
+	if(EMSCRIPTEN)
+		# Object file, not idlib: its sinf/cosf must win over musl's archive.
+		list(APPEND src_sys_base sys/web_libm.cpp)
+	endif()
 
 	set(src_sys_core
 		sys/glimp.cpp

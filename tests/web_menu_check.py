@@ -120,6 +120,10 @@ int main(){
  check(particles&&!particles->readOnly&&!std::strcmp(particles->replacementCvar,"r_useSoftParticles"),"MSAA replaced with supported live option");
  auto fps=Web_MenuChoice("guis/mainmenu.gui","ADV5Primary","r_swapInterval");
  check(fps&&!fps->readOnly&&!std::strcmp(fps->replacementCvar,"r_webFrameLimit"),"frame-rate row binds live browser cap");
+ auto resolution=Web_MenuChoice("guis/mainmenu.gui","OS2Primary","r_mode");
+ check(resolution&&!resolution->readOnly&&!std::strcmp(resolution->replacementCvar,"r_webRenderScale")&&!std::strcmp(resolution->values,"1;0.75;0.5"),"render-size row sets browser render resolution, reachable in fullscreen");
+ auto display=Web_MenuChoice("guis/mainmenu.gui","OS3Primary","r_fullscreen");
+ check(display&&!display->readOnly&&!std::strcmp(display->replacementCvar,"r_webFullscreen")&&!std::strcmp(display->choices,"Windowed;Fullscreen")&&!std::strcmp(display->values,"0;1"),"display-mode row toggles browser fullscreen instead of a video restart");
  check(!std::strcmp(fps->choices,"30 FPS;60 FPS;Unlocked")&&!std::strcmp(fps->values,"30;60;0"),"frame-rate choices have correct values");
  Cvar real{"5"};idChoiceWindow choice;choice.cvar=&real;choice.cvarStr.value="3";choice.webReadOnly=true;
  choice.UpdateVars(false,true);check(real.value=="5","Apply cannot overwrite disabled setting");

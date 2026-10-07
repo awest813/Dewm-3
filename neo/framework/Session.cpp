@@ -40,6 +40,7 @@ If you have questions concerning this license or the applicable additional terms
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 extern "C" void R_GLES_PerfPhase( int phase, double cpuMs );
+extern "C" void R_GLES_PerfTics( int tics );
 #endif
 
 #if defined(__AROS__)
@@ -2891,6 +2892,9 @@ void idSessionLocal::Frame() {
 			break;
 		}
 	}
+#ifdef __EMSCRIPTEN__
+	R_GLES_PerfTics( i < gameTicsToRun ? i + 1 : gameTicsToRun );
+#endif
 }
 
 /*

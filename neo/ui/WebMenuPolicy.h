@@ -15,8 +15,8 @@ static inline bool Web_MenuOnScreen(float x, float y, float w, float h) {
 }
 
 static const webMenuChoice_t webMenuChoices[] = {
-	{ "OS2Primary", "r_mode", "OS2Title", "Render size", "Browser", NULL, true, NULL },
-	{ "OS3Primary", "r_fullscreen", "OS3Title", "Display mode", "Browser", NULL, true, NULL },
+	{ "OS2Primary", "r_mode", "OS2Title", "Render resolution", "Full;75%;50%", "r_webRenderScale", false, "1;0.75;0.5" },
+	{ "OS3Primary", "r_fullscreen", "OS3Title", "Display mode", "Windowed;Fullscreen", "r_webFullscreen", false, "0;1" },
 	{ "OS6Primary", "s_numberOfSpeakers", "OS6Title", "Speakers", "Stereo", NULL, true, NULL },
 	{ "EAXPrimary", "s_useEAXReverb", "EAXTitle", "EAX N/A", "Off", NULL, true, NULL },
 	{ "SNDBPrimary", "s_driver", "SNDBTitle", "Audio backend", "WebAudio", NULL, true, NULL },

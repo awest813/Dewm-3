@@ -20,6 +20,8 @@ on:
       - 'tests/web_mouse_check.py'
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
+      - 'tests/web_trig_check.py'
+      - 'tests/trig_native.txt'
       - 'tests/rotation_native.txt'
       - 'tests/rotation_acos_native.txt'
       - 'tests/web_fov_check.py'
@@ -44,6 +46,7 @@ on:
       - 'tests/light_triangle_check.py'
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
+      - 'tests/render_scenes_parity.cfg'
       - 'tests/test_player_death_parity.py'
       - 'tests/entity_parity_check.py'
       - 'tests/test_entity_parity.py'
@@ -60,6 +63,7 @@ on:
       - 'tests/gameplay_parity*'
       - 'tests/save_weapon_parity.cfg'
       - 'tests/test_gameplay_parity.py'
+      - 'tests/web_bench/**'
       - '.github/workflows/web.yml'
   pull_request:
     branches: [ main, master ]
@@ -78,6 +82,8 @@ on:
       - 'tests/web_mouse_check.py'
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
+      - 'tests/web_trig_check.py'
+      - 'tests/trig_native.txt'
       - 'tests/rotation_native.txt'
       - 'tests/rotation_acos_native.txt'
       - 'tests/web_fov_check.py'
@@ -102,6 +108,7 @@ on:
       - 'tests/light_triangle_check.py'
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
+      - 'tests/render_scenes_parity.cfg'
       - 'tests/test_player_death_parity.py'
       - 'tests/entity_parity_check.py'
       - 'tests/test_entity_parity.py'
@@ -118,6 +125,8 @@ on:
       - 'tests/gameplay_parity*'
       - 'tests/save_weapon_parity.cfg'
       - 'tests/test_gameplay_parity.py'
+      - 'tests/web_bench/**'
+      - '.github/workflows/web.yml'
   workflow_dispatch:
 
 jobs:
@@ -169,6 +178,9 @@ jobs:
           bash -n scripts/web-setup.sh
           bash -n scripts/web-run.sh
           python3 -m py_compile web/serve.py
+          python3 -m py_compile tests/web_bench/prepare.py tests/web_bench/capture_server.py tests/web_bench/native_capture.py
+          node --check tests/web_bench/cdp.mjs
+          node --check tests/web_bench/bench.js
 
       - name: Check web shell data and input handling
         run: node tests/test_web_shell.js
@@ -203,16 +215,16 @@ jobs:
           em++ build-web/render-state-check.cpp -sENVIRONMENT=node -o build-web/render-state-check.js
           node build-web/render-state-check.js
           python3 tests/shadow_cull_check.py build-web/shadow-cull-check.cpp
-          em++ build-web/shadow-cull-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sENVIRONMENT=node -o build-web/shadow-cull-check.js
+          em++ build-web/shadow-cull-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -msimd128 -sENVIRONMENT=node -o build-web/shadow-cull-check.js
           node build-web/shadow-cull-check.js
           python3 tests/shadow_facing_check.py build-web/shadow-facing-check.cpp
-          em++ build-web/shadow-facing-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sENVIRONMENT=node -o build-web/shadow-facing-check.js
+          em++ build-web/shadow-facing-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -msimd128 -sENVIRONMENT=node -o build-web/shadow-facing-check.js
           node build-web/shadow-facing-check.js
           python3 tests/web_perf_check.py build-web/web-perf-check.cpp
           em++ build-web/web-perf-check.cpp -O3 -sENVIRONMENT=node -o build-web/web-perf-check.js
           node build-web/web-perf-check.js
           python3 tests/light_triangle_check.py build-web/light-triangle-check.cpp
-          em++ build-web/light-triangle-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sENVIRONMENT=node -o build-web/light-triangle-check.js
+          em++ build-web/light-triangle-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -msimd128 -sENVIRONMENT=node -o build-web/light-triangle-check.js
           node build-web/light-triangle-check.js
           python3 tests/render_shader_check.py build-web/render-check.html
           python3 tests/test_gameplay_parity.py
@@ -223,8 +235,11 @@ jobs:
           em++ build-web/web-angle-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/web-angle-check.js
           node build-web/web-angle-check.js
           python3 tests/web_rotation_check.py build-web/rotation-parity-check.cpp
-          em++ build-web/rotation-parity-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -sSTACK_SIZE=8MB -sENVIRONMENT=node -o build-web/rotation-parity-check.js
+          em++ build-web/rotation-parity-check.cpp -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -msimd128 -sSTACK_SIZE=8MB -sENVIRONMENT=node -o build-web/rotation-parity-check.js
           node build-web/rotation-parity-check.js
+          python3 tests/web_trig_check.py build-web/web-trig-check.cpp
+          em++ build-web/web-trig-check.cpp neo/sys/web_libm.cpp -Ineo -Ibuild-web -O3 -flto -fno-math-errno -fno-trapping-math -ffinite-math-only -fno-strict-aliasing -ffp-contract=off -msimd128 -sENVIRONMENT=node -sNODERAWFS=1 -o build-web/web-trig-check.js
+          node build-web/web-trig-check.js
           python3 tests/web_fov_check.py build-web/web-fov-check.cpp
           em++ build-web/web-fov-check.cpp -O3 -ffinite-math-only -ffp-contract=off -sENVIRONMENT=node -o build-web/web-fov-check.js
           node build-web/web-fov-check.js

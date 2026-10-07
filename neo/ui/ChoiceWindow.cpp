@@ -422,8 +422,9 @@ void idChoiceWindow::PostParse() {
 			cvarStr.Set(webOption->replacementCvar);
 			choiceVals.Set(webOption->values);
 			liveUpdate = true;
-			if (!idStr::Icmp(webOption->replacementCvar, "r_webFrameLimit") && rect.w() < 90) {
-				// The stock Yes/No field is too narrow for "Unlocked".
+			if ((!idStr::Icmp(webOption->replacementCvar, "r_webFrameLimit") ||
+				 !idStr::Icmp(webOption->replacementCvar, "r_webFullscreen")) && rect.w() < 90) {
+				// The stock Yes/No fields are too narrow for "Unlocked" and "Fullscreen".
 				idRectangle wider = rect;
 				wider.x -= 90 - wider.w;
 				wider.w = 90;

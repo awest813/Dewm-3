@@ -33,6 +33,10 @@ void check(bool ok,const char *label){if(!ok){std::fprintf(stderr,"FAIL %s\n",la
 struct Common {std::string text;void Printf(const char *format,...){
  char buffer[4096];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);text+=buffer;
 }} logger,*common=&logger;
+struct CVarSystem {int limit=60;int GetCVarInteger(const char *){return limit;}} cvars,*cvarSystem=&cvars;
+const char *va(const char *format,...){
+ static char buffer[1024];va_list args;va_start(args,format);vsnprintf(buffer,sizeof(buffer),format,args);va_end(args);return buffer;
+}
 '''.replace('HEADER', (root / 'neo/renderer/WebRenderTiming.h').as_posix())
 main = r'''
 void earlyReturn(){webRenderPhase_t timer(19);clockMs+=3;}
@@ -86,9 +90,29 @@ int main(){
  begin(1);R_GLES_PerfFrame(1);clockMs+=20;R_GLES_PerfFrame(7);
  check(g_webPerf.phaseCalls[19]==0 && g_webPerf.samples==1,"replacement sample resets state");
  check(logger.text.find("0.0 animation callbacks/s, 0 cap skips (0.0%)")!=std::string::npos,"zero callback denominator safe");
+ check(logger.text.find("Web pacing")==std::string::npos,"pacing report needs rendered intervals");
+ // Pacing: four sampled frames at a 30 FPS cap. Intervals are measured
+ // between rendered callbacks only; skipped callbacks do not split them.
+ cvars.limit=30;begin(4);clockMs=5000;
+ R_GLES_PerfCallback(true);R_GLES_PerfTics(9);R_GLES_PerfFrame(1);
+ const double steps[4]={33.3,33.4,50.0,33.3};const int tics[4]={2,2,3,0};
+ for(int f=0;f<4;++f){
+  clockMs+=16.7;R_GLES_PerfCallback(false);clockMs+=steps[f]-16.7;
+  R_GLES_PerfCallback(true);if(tics[f])R_GLES_PerfTics(tics[f]);R_GLES_PerfFrame(2);
+ }
+ check(logger.text.find("Web pacing: frame interval p50 33.40 ms, p95 50.00 ms, max 50.00 ms; 75.0% within 2.5 ms of the 30 FPS interval")!=std::string::npos,"locked-cap interval report");
+ check(logger.text.find("Web pacing: game tics per frame 0:1 1:0 2:2 3+:1")!=std::string::npos,"warmup tics excluded from per-frame histogram");
+ cvars.limit=0;begin(1);R_GLES_PerfCallback(true);R_GLES_PerfFrame(1);clockMs+=7;R_GLES_PerfCallback(true);R_GLES_PerfTics(1);R_GLES_PerfFrame(1);
+ check(logger.text.find("max 7.00 ms; unlocked")!=std::string::npos && logger.text.find("0:0 1:1 2:0 3+:0")!=std::string::npos,"unlocked pacing report");
+ // The slowest frame is reported with its own phase times and game tics.
+ cvars.limit=60;begin(2);clockMs=9000;
+ R_GLES_PerfCallback(true);R_GLES_PerfFrame(1);
+ clockMs+=16.7;R_GLES_PerfCallback(true);R_GLES_PerfPhase(2,5);R_GLES_PerfTics(1);R_GLES_PerfFrame(6);
+ clockMs+=40;R_GLES_PerfCallback(true);R_GLES_PerfPhase(2,30);R_GLES_PerfPhase(3,4);R_GLES_PerfPhase(5,1.5);R_GLES_PerfPhase(6,2.5);R_GLES_PerfAsync(1);R_GLES_PerfTics(3);R_GLES_PerfFrame(40);
+ check(logger.text.find("slowest frame 40.00 ms CPU: 0.00 events, 1.00 async, 0.00 commands, 30.00 session (3 tics), 4.00 draw (1.50 scene generation, 2.50 submit)")!=std::string::npos,"slowest frame reports only its own phases");
  std::printf("PASS: %d browser profiler accounting checks\n",checks);
 }
 '''
-names = ('R_GLES_PerfCallback', 'R_GLES_PerfAsync', 'R_GLES_PerfPhase',
+names = ('R_GLES_PerfCallback', 'R_GLES_PerfTics', 'R_GLES_PerfAsync', 'R_GLES_PerfPhase',
          'R_GLES_PerfTimestamp', 'R_GLES_PerfLightTriangles', 'R_GLES_PerfFrame')
 Path(sys.argv[1]).write_text(prefix + state + '\n'.join(function(name) for name in names) + main)

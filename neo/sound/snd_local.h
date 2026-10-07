@@ -56,6 +56,9 @@ If you have questions concerning this license or the applicable additional terms
 
 #ifdef __EMSCRIPTEN__
 #include "sound/openal_web_compat.h"
+// A newly generated source has default parameters; drop any values cached
+// for an earlier source with the same name (snd_world.cpp).
+void WebAl_ForgetSource( ALuint source );
 #endif
 
 // DG: make this code build with older OpenAL headers that don't know about ALC_SOFT_HRTF

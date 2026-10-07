@@ -382,6 +382,7 @@ unsigned int R_GLES_NoteProgram( const char *name, int ident = 0 );
 void R_GLES_MarkInteraction( int on );
 void R_GLES_SetStageColor( const float *color, int vertexColor );
 void R_GLES_PerfFrame( double cpuMs );
+void R_GLES_DumpDrawSurfs( const struct viewDef_s *view );
 void R_GLES_SetShadowMode( bool sharedVertices );
 // Deletes and re-links all GLSL programs (web equivalent of the desktop
 // reloadARBprograms console command, whose .vfp files don't exist on GLES).

@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dhewm3 (WebAssembly)</title>
+<!-- Inline icon: browsers otherwise request /favicon.ico, which hosts lack. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23151c23'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='15' font-weight='700' text-anchor='middle' fill='%239ce1de'%3Ed3%3C/text%3E%3C/svg%3E">
 <style>
   :root { color-scheme: dark; --bg: #0d1115; --panel: #151c23; --line: #303e48; --text: #e8eef1; --muted: #a7b7c1; --accent: #9ce1de; }
   * { box-sizing: border-box; }
@@ -35,6 +37,7 @@
   button:disabled { cursor: default; opacity: .5; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   input { accent-color: var(--accent); }
+  input[type=checkbox] { width: 18px; height: 18px; vertical-align: middle; flex: none; }
   a { color: var(--accent); text-underline-offset: 3px; }
   input[type=text], input[type=number], select { min-width: 0; border: 1px solid #49606c; border-radius: 4px; background: #0d151b; padding: 8px; color: inherit; font: inherit; }
   input[aria-invalid=true] { border-color: #f5c68e; }
@@ -58,6 +61,10 @@
   body.playing #wrap { padding-top: 16px; }
   #viewport { max-width: min(100%, calc((100dvh - 200px) * 4 / 3)); margin: 0 auto; }
   #canvas { width: 100%; height: auto; aspect-ratio: 4 / 3; background: #000; border: 1px solid var(--line); display: block; }
+  /* The page's scrollbar would otherwise stay reserved behind the game. */
+  html.game-fullscreen { overflow: hidden; }
+  #canvas:fullscreen { width: 100vw; height: 100vh; max-width: none; aspect-ratio: auto; border: 0; }
+  #canvas:-webkit-full-screen { width: 100vw; height: 100vh; max-width: none; aspect-ratio: auto; border: 0; }
   #screenshot-image { display: block; max-width: 100%; height: auto; margin-bottom: 16px; }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0; }
   .toolbar label { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 8px; }
@@ -66,7 +73,7 @@
   #mouse-game-link { flex: 1 1 240px; }
   #graphics, #controls-help { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0 20px; margin-top: 12px; }
   #graphics-controls { border: 0; padding: 0 0 16px; margin: 0; min-width: 0; }
-  .graphics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 12px; margin: 16px 0; }
+  .graphics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 12px; margin: 16px 0; }
   .graphics-grid label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .graphics-grid label:has(input[type=checkbox]) { justify-content: flex-start; }
   .graphics-grid input[type=number] { width: 90px; }
@@ -144,6 +151,7 @@
         <button id="focus-game" class="primary" type="button" disabled>Focus game</button>
         <button id="enable-audio" disabled>Enable audio</button>
         <button id="screenshot" type="button" disabled title="Download a PNG of the game">Screenshot</button>
+        <button id="fullscreen" type="button" disabled title="Show the game fullscreen (Alt+Enter in game)">Fullscreen</button>
         <label><input type="checkbox" id="usedev" aria-controls="developer-console"> Show console</label>
       </div>
     </div>
@@ -151,6 +159,7 @@
       <span id="mouse-status" role="status">Mouse is free.</span>
       <span id="save-status" role="status">Checking browser saves…</span>
       <span id="screenshot-status" role="status"></span>
+      <span id="fullscreen-status" role="status"></span>
       <a id="screenshot-download" hidden>Download PNG</a>
     </div>
     <details id="screenshot-preview" hidden>
@@ -177,13 +186,19 @@
           <label><input id="graphics-bump" type="checkbox"> Normal maps</label>
           <label><input id="graphics-specular" type="checkbox"> Specular highlights</label>
           <label><input id="graphics-particles" type="checkbox"> Soft particles</label>
+          <label><input id="graphics-showfps" type="checkbox"> Frame rate counter</label>
+        </div>
+        <div class="graphics-grid">
           <label for="graphics-gamma">Gamma <input id="graphics-gamma" type="number" min="0.5" max="3" step="0.05" aria-describedby="graphics-status"></label>
           <label for="graphics-brightness">Brightness <input id="graphics-brightness" type="number" min="0.5" max="2" step="0.05" aria-describedby="graphics-status"></label>
-          <label for="graphics-fps">Frame rate <select id="graphics-fps" aria-describedby="fps-help"><option value="30">30 FPS</option><option value="60" selected>60 FPS</option><option value="0">Unlocked</option></select></label>
-          <label for="graphics-filtering">Texture filtering <select id="graphics-filtering" aria-describedby="filtering-help"><option value="1">Standard</option><option value="2">2× anisotropic</option><option value="4">4× anisotropic</option><option value="8">8× anisotropic</option><option value="16">16× anisotropic</option></select></label>
+          <label for="graphics-fps">Frame rate <select id="graphics-fps" aria-describedby="fps-help fps-display"><option value="30">30 FPS</option><option value="60" selected>60 FPS</option><option value="0">Unlocked</option></select></label>
+          <label for="graphics-filtering">Texture filtering <select id="graphics-filtering" aria-describedby="filtering-help"><option value="1">Standard</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option></select></label>
+          <label for="graphics-scale">Render resolution <select id="graphics-scale" aria-describedby="scale-help"><option value="1">Full</option><option value="0.75">75%</option><option value="0.5">50%</option></select></label>
         </div>
-        <p id="fps-help" class="muted">Unlocked follows your browser and display refresh rate. Frame limits keep game speed unchanged.</p>
+        <p id="fps-help" class="muted">30 and 60 FPS lock frames to your display's refresh when it is a multiple of the cap. Unlocked follows your browser and display refresh rate. Game speed is the same at every setting.</p>
+        <p id="fps-display" class="muted" role="status"></p>
         <p id="filtering-help" class="muted">Anisotropic filtering sharpens floors and surfaces viewed at an angle.</p>
+        <p id="scale-help" class="muted">A lower render resolution raises the frame rate on slower graphics, especially fullscreen. The picture is softer.</p>
         <div class="graphics-actions">
           <button id="graphics-apply" type="button">Apply graphics</button>
           <button id="graphics-defaults" type="button">Restore graphics defaults</button>
@@ -199,9 +214,11 @@
         <p><kbd>Space</kbd> Jump · <kbd>C</kbd> Crouch</p>
         <p><kbd>R</kbd> Reload · <kbd>Tab</kbd> PDA</p>
         <p><kbd>Esc</kbd> Release mouse / game menu</p>
+        <p><kbd>Alt</kbd> + <kbd>Enter</kbd> Fullscreen</p>
         <p><kbd>Shift</kbd> + <kbd>Esc</kbd> Engine console</p>
       </div>
       <p class="muted">Click the game or use Focus game to capture the mouse. If capture is unavailable, hold the right mouse button and drag to look. Bindings can be changed in the in-game Controls menu.</p>
+      <p class="muted">In fullscreen, Chrome and Edge keep <kbd>Esc</kbd> for the game: hold it to leave fullscreen. Other browsers leave fullscreen on <kbd>Esc</kbd>.</p>
     </details>
   </section>
 
@@ -403,6 +420,11 @@
       }
     }, true);
   });
+  // Buttons pressed on the game and passed to SDL. Their release must reach
+  // SDL even when the browser delivers it elsewhere (a fullscreen change
+  // during the click retargets mouseup to the page root); otherwise SDL keeps
+  // the button held and ignores the next press.
+  var gameButtons = 0;
   ['mousedown', 'mouseup', 'mousemove', 'wheel'].forEach(function (type) {
     document.addEventListener(type, function (ev) {
       if (type === 'mouseup' && dragLooking && ev.button === 2) {
@@ -433,6 +455,12 @@
           return;
         }
       }
+      var bit = 1 << (ev.button || 0);
+      if (type === 'mousedown' && ev.target === canvas) gameButtons |= bit;
+      if (type === 'mouseup' && (gameButtons & bit)) {
+        gameButtons &= ~bit;
+        return;	// SDL releases it; a release outside the canvas is not consumed
+      }
       if (ev.target !== canvas) {
         if (type === 'mouseup') releaseGameInput();
         ev.stopPropagation();
@@ -451,8 +479,44 @@
     }
   });
 
-  var graphicsFields = ['shadows', 'bump', 'specular', 'particles', 'gamma', 'brightness', 'fps', 'filtering'];
-  var graphicsDefaults = [1, 0, 0, 1, 1, 1, 60, 8];
+  var graphicsFields = ['shadows', 'bump', 'specular', 'particles', 'gamma', 'brightness', 'fps', 'filtering', 'showfps', 'scale'];
+  var graphicsDefaults = [1, 0, 0, 1, 1, 1, 60, 8, 0, 1];
+  var renderScales = [1, 0.75, 0.5];
+  function isGraphicsToggle(index) { return index < 4 || index === 8; }
+  // Explains what the selected cap does on this display, from the refresh
+  // the engine measures between animation callbacks.
+  function frameRateStatus(cap) {
+    var hz = Module.ccall('Web_GetDisplayRefresh', 'number', [], []);
+    if (!Number.isFinite(hz) || hz <= 0) return 'Measuring your display refresh rate…';
+    var rate = Math.round(hz);
+    var refreshes = cap ? Module.ccall('Web_GetLockedRefreshes', 'number', ['number'], [cap]) : 0;
+    var slow = rate < 45 ? ' The browser is delivering about ' + rate + ' frames per second; ' +
+      'battery or energy-saving settings often cause this.' : '';
+    if (refreshes === 1) return cap + ' FPS is locked to every refresh of this ' + rate + ' Hz display.' + slow;
+    if (refreshes > 1) return cap + ' FPS is locked: each frame lasts ' + refreshes + ' refreshes of this ' + rate + ' Hz display.' + slow;
+    if (slow) return (cap ? cap + ' FPS is not reachable here.' : 'Unlocked renders every browser frame.') + slow;
+    if (!cap) return 'Unlocked renders every refresh of this ' + rate + ' Hz display.';
+    return 'This ' + rate + ' Hz display is not a multiple of ' + cap + ' FPS, so frames cannot be evenly spaced. Unlocked may look smoother.';
+  }
+  // What the game renders right now, against the cap in effect in the engine.
+  function renderedRateStatus(cap) {
+    var rate = Module.ccall('Web_GetRenderedFrameRate', 'number', [], []);
+    if (!Number.isFinite(rate) || rate <= 0) return '';
+    var text = ' The game is rendering about ' + Math.round(rate) + ' FPS.';
+    if (cap && rate < cap * 0.9) {
+      text += cap > 30 ? ' For steadier motion, choose a lower render resolution or 30 FPS.' :
+        ' For steadier motion, choose a lower render resolution.';
+    }
+    return text;
+  }
+  function updateFrameRateStatus() {
+    if (!runtimeReady || !started) return;
+    try {
+      var cap = Number(document.getElementById('graphics-fps').value);
+      var applied = Module.ccall('Web_GetGraphicsOption', 'number', ['number'], [6]);
+      document.getElementById('fps-display').textContent = frameRateStatus(cap) + renderedRateStatus(applied);
+    } catch (error) { document.getElementById('fps-display').textContent = ''; }
+  }
   function textureFilteringLimit() {
     var limit = Module.ccall('Web_GetTextureFilteringLimit', 'number', [], []);
     if (!Number.isFinite(limit) || limit < 1 || limit > 16) throw new Error('Texture filtering unavailable.');
@@ -470,7 +534,7 @@
       var value = Module.ccall('Web_GetGraphicsOption', 'number', ['number'], [index]);
       if (!Number.isFinite(value) || value < 0) throw new Error('Graphics settings unavailable');
       var input = document.getElementById('graphics-' + field);
-      if (index < 4) input.checked = (index === 1 || index === 2) ? !value : !!value;
+      if (isGraphicsToggle(index)) input.checked = (index === 1 || index === 2) ? !value : !!value;
       else if (index === 7) {
         var effective = Math.max(1, Math.min(value, limit));
         // Preserve valid intermediate settings made through the native menu
@@ -493,7 +557,7 @@
       var values = graphicsFields.map(function (field, index) {
         if (defaults) return index === 7 ? Math.min(graphicsDefaults[index], limit) : graphicsDefaults[index];
         var input = document.getElementById('graphics-' + field);
-        if (index < 4) return (index === 1 || index === 2) ? +!input.checked : +input.checked;
+        if (isGraphicsToggle(index)) return (index === 1 || index === 2) ? +!input.checked : +input.checked;
         // Number('') would silently reset a blank field to zero.
         return input.value.toString().trim() === '' ? NaN : Number(input.value);
       });
@@ -501,8 +565,10 @@
       document.getElementById('graphics-brightness').removeAttribute('aria-invalid');
       document.getElementById('graphics-fps').removeAttribute('aria-invalid');
       document.getElementById('graphics-filtering').removeAttribute('aria-invalid');
+      document.getElementById('graphics-scale').removeAttribute('aria-invalid');
       var invalid = values.findIndex(function (value, index) {
-        return !Number.isFinite(value) || (index < 4 ? (value !== 0 && value !== 1) :
+        return !Number.isFinite(value) || (isGraphicsToggle(index) ? (value !== 0 && value !== 1) :
+          index === 9 ? renderScales.indexOf(value) < 0 :
           (index === 6 ? value !== 0 && value !== 30 && value !== 60 :
             (index === 7 ? value < 1 || value > limit :
               value < 0.5 || value > (index === 4 ? 3 : 2))));
@@ -511,7 +577,8 @@
         var badField = document.getElementById('graphics-' + graphicsFields[invalid]);
         badField.setAttribute('aria-invalid', 'true');
         badField.focus();
-        throw new Error(invalid === 6 ? 'Choose 30 FPS, 60 FPS, or Unlocked.' :
+        throw new Error(invalid === 9 ? 'Choose Full, 75% or 50% render resolution.' :
+          invalid === 6 ? 'Choose 30 FPS, 60 FPS, or Unlocked.' :
           (invalid === 7 ? 'Choose a supported texture filtering level.' :
             'Enter gamma from 0.5 to 3 and brightness from 0.5 to 2.'));
       }
@@ -521,15 +588,24 @@
         }
       });
       readGraphics();
+      updateFrameRateStatus();
       message.textContent = (defaults ? 'Graphics defaults restored.' : 'Graphics applied.') +
         (savesReady ? ' Will be saved with your browser configuration.' : ' Browser saving is unavailable.');
     } catch (error) { message.textContent = error.message; }
   }
+  var frameRateTimer = 0;
   document.getElementById('graphics').addEventListener('toggle', function () {
+    clearInterval(frameRateTimer);
+    frameRateTimer = 0;
     if (this.open && started && !document.getElementById('graphics-controls').disabled) {
       try { readGraphics(); } catch (error) { document.getElementById('graphics-status').textContent = error.message; }
+      updateFrameRateStatus();
+      // The refresh estimate settles over the first seconds and follows
+      // display changes; refresh the explanation while the panel is open.
+      frameRateTimer = setInterval(updateFrameRateStatus, 2000);
     }
   });
+  document.getElementById('graphics-fps').addEventListener('change', updateFrameRateStatus);
   document.getElementById('graphics-apply').addEventListener('click', function () { applyGraphics(false); });
   document.getElementById('graphics-defaults').addEventListener('click', function () { applyGraphics(true); });
 
@@ -564,6 +640,8 @@
     document.getElementById('focus-game').disabled = true;
     document.getElementById('enable-audio').disabled = true;
     document.getElementById('screenshot').disabled = true;
+    document.getElementById('fullscreen').disabled = true;
+    if (fullscreenElement()) setFullscreen(false);
     document.getElementById('graphics-controls').disabled = true;
     document.getElementById('run-command').disabled = true;
     progressEl.style.display = 'none';
@@ -634,6 +712,18 @@
     updateStart();
   }
 
+  // Release builds use WebAssembly SIMD (WEB_SIMD). This minimal module with
+  // one v128 instruction validates only where SIMD is available.
+  var wasmSimd = (function () {
+    try {
+      return typeof WebAssembly === 'object' && WebAssembly.validate(new Uint8Array([
+        0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
+    } catch (e) { return false; }
+  })();
+  if (!wasmSimd) {
+    log('WebAssembly SIMD is unavailable; this engine build requires it.', true);
+  }
+
   // Emscripten Module — must exist before the generated script runs
   // (emcc inserts the engine loader at the end of this document).
   var Module = {
@@ -644,12 +734,17 @@
       updateMouseStatus();
     },
     onScreenshotReady: receiveScreenshot,
+    // r_webFullscreen changes (game menu, Alt+Enter, console) arrive here.
+    setFullscreen: function (on) { setFullscreen(on); },
+    // r_webRenderScale changes (Graphics options, console, saved config).
+    setRenderScale: function (scale) { setRenderScale(scale); },
     noInitialRun: true, // we callMain() after game data + IDBFS are ready
     print: function (text) { log(text, false); },
     printErr: function (text) { log(text, true); },
     onAbort: function (reason) {
       log('Engine stopped: ' + reason, true);
-      showEngineFailure('The game engine stopped.');
+      showEngineFailure(wasmSimd ? 'The game engine stopped.' :
+        'This browser cannot run the engine: it lacks WebAssembly SIMD. Use Chrome or Edge 91+, Firefox 89+ or Safari 16.4+.');
     },
     onRuntimeInitialized: function () {
       // IDBFS backing for saves/configs (mirrors desktop PATH_SAVE).
@@ -891,6 +986,10 @@
       document.getElementById('run-command').disabled = false;
       document.getElementById('enable-audio').disabled = false;
       document.getElementById('screenshot').disabled = false;
+      document.getElementById('fullscreen').disabled = !fullscreenSupported();
+      if (!fullscreenSupported()) {
+        document.getElementById('fullscreen').title = 'This browser cannot show a page element fullscreen.';
+      }
       try {
         readGraphics();
         document.getElementById('graphics-controls').disabled = false;
@@ -941,6 +1040,121 @@
     if (document.hidden) releaseGameInput();
   });
   canvas.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+
+  // ---- render resolution ------------------------------------------------------
+  // SDL sizes the drawing buffer as the canvas's CSS size times
+  // devicePixelRatio, read whenever the window resizes. Scaling the ratio it
+  // sees renders fewer pixels; the browser upscales the canvas. The real ratio
+  // keeps following display changes.
+  var renderScale = 1, pixelRatioWrapped = false;
+  var realPixelRatio = function () { return 1; };
+  function setRenderScale(scale) {
+    scale = renderScales.indexOf(+scale) >= 0 ? +scale : 1;
+    if (scale === renderScale) return;
+    if (!pixelRatioWrapped) {
+      var native = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio');
+      realPixelRatio = native && native.get ? function () { return native.get.call(window); } :
+        function () { return native && typeof native.value === 'number' ? native.value : 1; };
+      try {
+        Object.defineProperty(window, 'devicePixelRatio', {
+          configurable: true, enumerable: true, get: function () { return realPixelRatio() * renderScale; },
+        });
+        pixelRatioWrapped = true;
+      } catch (error) { return; }
+    }
+    renderScale = scale;
+    // SDL recomputes the drawing buffer on window resize events.
+    if (typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(typeof Event === 'function' ? new Event('resize') : { type: 'resize' });
+    }
+  }
+
+  // ---- fullscreen -------------------------------------------------------------
+  // The canvas itself goes fullscreen and fills the screen; SDL then resizes
+  // the drawing buffer, so the engine renders at the screen's aspect ratio.
+  // Browsers allow the request only shortly after a click or key press.
+  function fullscreenElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function fullscreenSupported() {
+    return !!((document.fullscreenEnabled || document.webkitFullscreenEnabled) &&
+      (canvas.requestFullscreen || canvas.webkitRequestFullscreen));
+  }
+  function reportFullscreen(active) {
+    if (!runtimeReady || !started) return;
+    try { Module.ccall('Web_SetFullscreenState', null, ['number'], [active ? 1 : 0]); }
+    catch (error) { /* the engine stopped; nothing to update */ }
+  }
+  var fullscreenBlocked = 'Fullscreen was blocked. Use the Fullscreen button, or press Alt+Enter while playing.';
+  function fullscreenFailed(message) {
+    var status = document.getElementById('fullscreen-status');
+    // Chrome both rejects the request and fires fullscreenerror.
+    if (status.textContent === message) return;
+    status.textContent = message;
+    reportFullscreen(fullscreenElement() === canvas);
+  }
+  function setFullscreen(on) {
+    var active = fullscreenElement() === canvas;
+    if (!!on === active) { reportFullscreen(active); return; }
+    if (on) {
+      if (!started || !fullscreenSupported()) {
+        fullscreenFailed('This browser cannot show the game fullscreen.');
+        return;
+      }
+      var request = canvas.requestFullscreen || canvas.webkitRequestFullscreen;
+      // A new attempt: its refusal must be reported even if the last one failed too.
+      document.getElementById('fullscreen-status').textContent = '';
+      try {
+        var pending = request.call(canvas, { navigationUI: 'hide' });
+        if (pending && typeof pending.catch === 'function') {
+          pending.catch(function () { fullscreenFailed(fullscreenBlocked); });
+        }
+      } catch (error) {
+        fullscreenFailed(fullscreenBlocked);
+      }
+    } else {
+      var exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (!fullscreenElement() || !exit) return;
+      try {
+        var leaving = exit.call(document);
+        if (leaving && typeof leaving.catch === 'function') leaving.catch(function () {});
+      } catch (error) {}
+    }
+  }
+  var fullscreenShown = false;
+  function fullscreenChanged() {
+    var active = fullscreenElement() === canvas;
+    // Chrome fires both the standard and the webkit-prefixed event.
+    if (active === fullscreenShown) return;
+    fullscreenShown = active;
+    document.documentElement.classList.toggle('game-fullscreen', active);
+    // The label states the action; no aria-pressed, which would contradict it.
+    document.getElementById('fullscreen').textContent = active ? 'Exit fullscreen' : 'Fullscreen';
+    var keyboard = typeof navigator !== 'undefined' ? navigator.keyboard : null;
+    var status = document.getElementById('fullscreen-status');
+    if (active) {
+      status.textContent = 'Fullscreen. Press Esc to leave.';
+      // Chrome and Edge can route Esc to the game; holding it still exits.
+      if (keyboard && typeof keyboard.lock === 'function') {
+        keyboard.lock(['Escape']).then(function () {
+          if (fullscreenElement() === canvas) status.textContent = 'Fullscreen. Hold Esc to leave.';
+          else if (typeof keyboard.unlock === 'function') keyboard.unlock();	// left before the lock arrived
+        }, function () {});
+      }
+      canvas.focus();
+    } else {
+      if (keyboard && typeof keyboard.unlock === 'function') keyboard.unlock();
+      status.textContent = '';
+    }
+    reportFullscreen(active);
+  }
+  document.addEventListener('fullscreenchange', fullscreenChanged);
+  document.addEventListener('webkitfullscreenchange', fullscreenChanged);
+  document.addEventListener('fullscreenerror', function () { fullscreenFailed(fullscreenBlocked); });
+  // Safari reports refusals only through its prefixed event.
+  document.addEventListener('webkitfullscreenerror', function () { fullscreenFailed(fullscreenBlocked); });
+  document.getElementById('fullscreen').addEventListener('click', function () {
+    resumeAudio();
+    setFullscreen(fullscreenElement() !== canvas);
+  });
 </script>
 
 {{{ SCRIPT }}}

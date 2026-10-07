@@ -22,6 +22,14 @@ fixture still exposes a rocket launch/flight mismatch; see **Collision-shape
 precision correction** below. Passing the earlier movement and AI fixtures
 does not establish general gameplay accuracy.
 
+Latest performance evidence (2026-10-06): the soft-particle depth copy was
+the dominant GPU cost under ANGLE/D3D11. Copying depth without stencil halves
+measured GPU frame time in the hangar fixture with pixel-identical captures.
+Fifteen hangar and campaign views now differ from native by MAE
+0.0025–0.0113 at native size, and their random seeds match. See **GPU depth
+copy, submission audit and repeatable bench** and the section after it, and
+[`WEB-RENDERING-PLAN.md`](WEB-RENDERING-PLAN.md) for the next steps.
+
 Local verification on 2026-10-03: Emscripten 4.0.23 compiled and linked the
 engine without game data, producing `dhewm3.html`, `dhewm3.js`, and
 `dhewm3.wasm`. The browser shell's data-validation regression tests passed.
@@ -253,11 +261,14 @@ or brightness focuses the offending field and sets `aria-invalid` before any
 engine writes. The setup stacks into a single column at narrow widths.
 
 Graphics options exposes the same three Frame rate choices through Apply
-graphics. The archived `r_webFrameLimit` setting uses `30`, `60`, or `0`
-(Unlocked). A deadline gate on browser animation callbacks limits rendered
-frames independently of the fixed game ticks. Late callbacks skip missed
-render deadlines instead of bursting; changing limits takes effect on the next
-callback. This sets a maximum, not a guarantee of performance in complex scenes.
+graphics, plus a Frame rate counter (`com_showFPS`). The archived
+`r_webFrameLimit` setting uses `30`, `60`, or `0` (Unlocked). A deadline gate
+on browser animation callbacks limits rendered frames independently of the
+fixed game ticks. When the cap divides the display refresh, the cap is locked
+to whole refreshes (see **Locked 30 and 60 FPS** below). Late callbacks skip
+missed render deadlines instead of bursting; changing limits takes effect on
+the next callback. This sets a maximum, not a guarantee of performance in
+complex scenes.
 
 Frame-limit validation on 2026-10-04 passed the Release WebAssembly and Windows
 builds, shell regressions, 97 gameplay/input/graphics checks and 98 menu checks.
@@ -671,8 +682,10 @@ adapts known stock controls during GUI parsing; it does not distribute a copy
 of the commercial GUI. Matching requires the stock GUI path, window name and
 original cvar binding, so unfamiliar mod controls keep their own behavior.
 
-- **System:** render size and display mode show a muted `Browser` state;
-  speakers show `Stereo`, and unsupported EAX shows `Off`. The legacy audio
+- **System:** display mode offers **Windowed** and **Fullscreen** and
+  switches browser fullscreen immediately (see **Fullscreen** below). Render
+  size shows a muted `Browser` state; speakers show `Stereo`, and unsupported
+  EAX shows `Off`. The legacy audio
   backend control, when present, shows `WebAudio`. These display-only controls
   do not accept input or overwrite engine values during Apply.
 - **Advanced:** Frame rate offers **30 FPS**, **60 FPS** (default), and
@@ -2228,6 +2241,596 @@ existing `BTree.h` unused-variable warning. Fresh browser image comparisons and
 live before/after FPS measurements for this fused-bounds change remain pending;
 the earlier model-profiling image checks do not validate this later change.
 
+### GPU depth copy, submission audit and repeatable bench (2026-10-06)
+
+This audit added GPU timing, then changed only paths whose output can be
+compared exactly. The follow-on work is planned in
+[`WEB-RENDERING-PLAN.md`](WEB-RENDERING-PLAN.md).
+
+**Bench.** `tests/web_bench/` drives a local headless Chrome over the DevTools
+protocol, stages the user's own archives from the local server, runs the
+hangar fixture as one command buffer and posts captures to a local sink.
+It also records `webperf` samples, GPU time per animation callback
+(`EXT_disjoint_timer_query_webgl2`) and an optional WebGL call histogram.
+Reference conditions for this section: Chrome 154 headless, ANGLE D3D11,
+AMD Radeon integrated GPU (0x1506), 1005x753 drawing buffer.
+
+```sh
+python tests/web_bench/prepare.py --build build-web --data "<Doom 3 install>" \
+    --native <native rails.png> <native stairs.png> <native saved_rail.png>
+python web/serve.py --dir build-web --port 8090
+python tests/web_bench/capture_server.py --out build-web/bench/captures
+chrome --headless=new --remote-debugging-port=9222 --use-angle=d3d11 \
+    --window-size=1400,1050 --user-data-dir=<scratch profile> about:blank
+node tests/web_bench/cdp.mjs http://localhost:8090/dhewm3.html \
+    tests/web_bench/run_fixture.js fixture=hangar label=after compare=native,before
+```
+
+The runner now defaults to a 640x480 canvas (see the next section); this
+section's 1005x753 measurements correspond to `width=1005`. The capture sink
+binds 127.0.0.1 and accepts uploads only from pages on a loopback origin, so
+other sites open in the same browser cannot write into the captures folder.
+
+The embedded app browser pauses animation callbacks while its pane is hidden;
+the headless instance does not. Captures depend on the drawing-buffer size:
+the same build at 629x471 and 1005x753 differs by MAE 0.137–0.207, and both
+differ from the earlier embedded-browser captures. Compare builds only at the
+same canvas size. Under these conditions native MAE is 0.222232/0.273872/
+0.332901 (rails/stairs/saved rail). ANGLE's OpenGL backend matched D3D11
+within MAE 0.003.
+
+**Soft-particle depth copy.** Toggling features one at a time showed soft
+particles costing about 10 of 16 ms GPU time (16.1 → 6.1 ms when disabled;
+shadows, fog and post-processing each changed by about 1 ms or less).
+The cost was the per-view
+`_currentDepth` copy, not the particle shader. The web shim blitted depth
+*and stencil* from the default framebuffer. ANGLE's D3D11 backend has no
+shader path for combined depth/stencil blits. The shader samples only depth,
+so `r_webDepthOnlyCopy 1` (default) blits depth alone. Five interleaved rounds
+in one page measured:
+
+| `_currentDepth` copy | GPU p50 | FPS (uncapped, 60 Hz display) |
+| --- | ---: | ---: |
+| depth + stencil (previous) | 16.87 ms | 40.9 |
+| depth only | 8.07 ms | 60.0 |
+| soft particles disabled | 7.48 ms | 59.5 |
+
+**Submission.** Measured per frame at the frozen saved-rail view (761 draws):
+
+- **Texture units.** Interaction setup selected every texture unit before each
+  bind, even when the engine then skipped the bind. The shim now records the
+  selection and sends it before the next texture-unit call (binds, uploads,
+  parameters, copies, state queries). Selections fell from 1,899 to 826.
+- **Stencil.** Stencil op/function calls are cached from a new context's
+  defaults; `stencilOpSeparate` fell from 268 to 52.
+- **Frame-temp vertices.** These are staged in memory and uploaded once, before
+  first use. `idVertexCache::Position` flushes the staged range, so even
+  mid-frame backend work sees current data. `r_webBatchFrameTemp 0` restores
+  per-allocation uploads.
+- **Call count.** WebGL calls fell from 10,479 to 9,046 per frame.
+
+A per-draw scratch index ring measured neutral and was not kept.
+
+An in-page A/B with each toggle shows the existing `r_webStateCache` is worth
+6.11 → 2.8 ms of submit time. Batching trims scene/submit by about 0.1–0.3 ms;
+total CPU varies by several ms between identical samples, so treat that as
+noise-level.
+
+`webperf` now also reports upload calls/bytes, CPU-index draws, texture-unit
+selects and stencil state calls.
+
+**Results.** Two interleaved runs per build, separate page loads:
+
+| Build | Frozen GPU p50 | Live (60 cap) FPS | Live GPU p50 | Live CPU mean |
+| --- | ---: | ---: | ---: | ---: |
+| before | 13.97 / 10.85 ms | 53.7 / 58.7 | 14.45 / 11.62 ms | 10.21 / 7.62 ms |
+| after | 7.60 / 6.38 ms | 58.3 / 60.0 | 4.92 / 5.57 ms | 6.51 / 6.92 ms |
+
+GPU clocks on this integrated GPU vary between runs. The pre-change build
+measured 16.9–18.6 ms GPU p50 in earlier samples. With the depth copy fixed, the
+remaining GPU frame is about 6.5–7.5 ms. Disabling interactions saves about
+3 ms, shadows about 0.5–1 ms, and soft particles about 0.3 ms.
+
+The live simulation sample is now usually CPU-bound on this machine (CPU mean
+10–22 ms across loads). These are one scene and one device.
+
+**Accuracy fixes.** Both bring the GLSL closer to the stock programs:
+
+- The interaction shader now multiplies by the whole falloff texel
+  (`interaction.vfp` uses all channels), not only red.
+- The flat program's projective mode (blend lights, `RB_BlendLight`) now
+  modulates projected and falloff alpha as fixed-function MODULATE does.
+  Previously it kept only the current color's alpha.
+
+The hangar views use grey falloffs and alpha-independent blend lights, so the
+fixes do not change those captures. Three new GPU checks cover them; the
+falloff check fails on the previous shader.
+
+**Frame cap.** The 60 FPS cap accepted callbacks only 0.5 ms before their
+deadline. Callbacks that start late, or a display running at 16.65 ms,
+produced spurious skips. The tolerance is now a quarter interval. The deadline
+still advances one interval per rendered frame, so 90–240 Hz displays keep the
+capped average. New timing checks cover a fast "60 Hz" display with up to 4 ms
+start delay across caps and refresh rates; they fail on the previous rule.
+Live 60-cap skip rates fell from 0–3.2% to 0.3–2.0%.
+
+**Verification.**
+
+- All three frozen hangar views are pixel-identical to the pre-change build,
+  with maximum channel change zero after every step, including the final build.
+- Game/render clocks, frames and random seeds match the native fixture.
+- 89 GPU shader checks pass (three new).
+- 113 extracted renderer-state checks pass (15 new: deferred texture-unit
+  selection and stencil caching).
+- 25 profiler checks, 118 timing/input/graphics checks, the launcher
+  regressions and the Python verifiers pass.
+- Engine changes are guarded by `__EMSCRIPTEN__` or confined to web-only files.
+  The native Windows build was not rebuilt for this audit.
+
+**Found but not changed.**
+
+- The S3TC probe compares against `GL_EXT_texture_compression_s3tc`.
+  Emscripten reports `WEBGL_compressed_texture_s3tc` (with and without a `GL_`
+  prefix), so the web build never uses compressed textures. At the Ultra spec
+  (`image_useCompression 0`) this has no visual effect.
+- At High/Medium specs, native uses DXT while the web build promotes those
+  images to RGBA8: more memory than native, and different pixels.
+
+Both need native High-spec references before changing; see the plan.
+
+Evidence (ignored): `build-web/bench/captures/*-result.json`,
+`build-web/captures/*.json` and the `perf*-build.log`/`final*-build.log`
+files in the worktree build directory.
+
+### Native-size parity, campaign scenes, submission and libm (2026-10-06, continued)
+
+**Capture size.** The engine derives its projection from the window aspect,
+so a capture depends on the drawing-buffer size. The native fixtures run at
+640x480 (`r_mode 3`); the earlier 1005x753 comparisons therefore measured a
+different projection, not renderer error. The bench now pins the canvas to
+640x480 (`width=` overrides it for timing only). At native size the three
+hangar views differ from native by MAE 0.0034/0.0066/0.0095 instead of
+0.22–0.33.
+
+**Campaign scenes.** `tests/render_scenes_parity.cfg` adds twelve frozen views
+(Mars City underground, Alpha Labs 1, Delta 2a, Enpro, Recycling 1, Hell,
+Delta 5, three heat-haze/glass views, a reflective-glass view and an imp
+encounter). `s_constantAmplitude 0.5` pins sound-driven lights, whose sound
+clock otherwise follows wall time. `tests/web_bench/native_capture.py` records
+the native references from the same file.
+
+```sh
+python tests/web_bench/native_capture.py --exe <native dhewm3.exe> \
+    --data "<Doom 3 install>" --fixture scenes --label native
+node tests/web_bench/cdp.mjs http://localhost:8090/dhewm3.html \
+    tests/web_bench/run_fixture.js fixture=scenes label=after compare=native,before
+node tests/web_bench/cdp.mjs http://localhost:8090/dhewm3.html \
+    tests/web_bench/run_console_fixture.js cfg=combat_pursuit_parity label=after
+```
+
+`run_console_fixture.js` runs any native console fixture in the browser and
+saves its log for the matching `tests/*_parity_check.py` verifier.
+
+**Accuracy fixes found by the scene set** (native MAE before → after):
+
+| View | Before | After | Cause |
+| --- | ---: | ---: | --- |
+| Alpha Labs 1 | 0.156 | 0.0061 | fixed-function colors were not clamped to [0,1] |
+| Hell | 0.558 | 0.0063 | sky shader chosen from unit 1 only |
+| Delta 5 | 0.445 | 0.0057 | both of the above |
+| imp | 0.067 | 0.0112 | both of the above |
+| heat (breakable glass) | 0.0136 | 0.0096 | sky shader selection |
+
+- The flat, environment and sky shaders now clamp the constant color, as
+  fixed-function `glColor` does. Overbright material colors had been
+  brightening surfaces.
+- The sky (cube-map) shader is selected only when unit 0 holds a cube map and
+  unit 1 is disabled or also a cube map. The first fix keyed only on unit 1
+  and broke the reflective-glass view (MAE 2.12); checking unit 0 gives 0.0100.
+
+All fifteen views now differ from native by MAE 0.0025–0.0113. A new GPU check
+covers the clamp (it fails on the previous shader).
+
+**Diagnostics.** Three console commands find these differences:
+
+- `webgpu [frames]`: GPU time per pass (depth fill, `_currentDepth` copy,
+  shadows, interactions, translucent/post, other) from timer queries, read one
+  frame late.
+- `websurfaces [x1 y1 x2 y2]`: the draw surfaces of the next frame, optionally
+  only those covering a rectangle.
+- `webpixel x y [first last]`: the pixel's color after each draw of the next
+  frame, with blend/depth/stencil state, program, vertex color and bound
+  textures. The clamp and sky bugs were found this way.
+
+**GPU.** With `r_enableDepthCapture -1` (automatic), a view now skips the
+`_currentDepth` copy when no drawn surface can read it: no soft particle
+(`particle_radius`) and no material stage, including custom-program stages,
+that names `_currentDepth` (`r_webSkipUnusedDepthCopy`, default on). This
+saves 0.4–1.0 ms GPU time in such views. Captures are unchanged.
+
+**Submission.**
+
+- **Vertex array objects.** `r_webVertexArrays` (default on) caches one VAO
+  per element buffer and enabled-attribute layout, binding array and element
+  buffers lazily. Streamed buffers keep the default VAO. Enpro's submit time
+  fell from 5.69 to 3.68 ms; the imp view was neutral. The hangar now issues
+  678 VAO binds instead of about 2,500 attribute-pointer and 1,600
+  buffer-bind calls.
+- **OpenAL.** Per-channel source parameters are cached and repeated
+  `alSourcei/f/3f` and listener calls skipped (Emscripten's OpenAL emulation is
+  JavaScript). The audio mixer's share of profile samples fell from 6.5% to
+  1.5%, about 0.4–0.8 ms per frame.
+- **WebAssembly SIMD.** The web preset builds with `-msimd128`
+  (`WEB_SIMD=ON`). Auto-vectorization keeps each lane's operation order; every
+  extracted precision harness and gameplay fixture still matches. The shell
+  reports browsers without SIMD instead of failing to instantiate.
+- **Interaction parameters.** The interaction shader's fourteen vertex
+  parameters (`program.env[4..17]`) are one array uniform, uploaded once
+  before a draw that changed any of them. `uniform4fv` calls fell from 836 to
+  413 per hangar frame; WebGL calls per frame fell to 5,166 (10,479 before the
+  audit). Measured CPU time changed by 0–0.1 ms: per-call overhead is now
+  small. `r_webDeferInteractionEnv 0` uploads the array on every change. A new
+  GPU check feeds distinct values into every slot and reads the shader
+  outputs back.
+- A shared index ring measured neutral and was dropped.
+
+Hangar at 640x480 after these changes: frozen CPU mean 4.2–4.8 ms, GPU p50
+about 5.1 ms; live 60-cap CPU mean 5.4–5.7 ms, GPU p50 4.9–6.4 ms.
+
+**Where the time is now.** Per-pass GPU timing at 640x480 shows interactions
+dominate: Enpro 5.8–9.9 of 8.0–12.9 ms, Hell 6.0 of 9.7 ms, imp 4.7 of
+10.5 ms (shadows 1.7 ms, ambient/translucent 2.6 ms). The depth copy is now
+0.15–0.4 ms. GPU clocks on this integrated GPU vary by up to 40% between page
+loads. Removing the interaction shader's alpha-test `discard` (to keep early
+depth/stencil rejection) did not change GPU time measurably, so it was not
+pursued. A CPU profile of Enpro shows the main thread 66% idle. No function
+other than idle exceeds 2% self time; vertex-array binds are the largest
+WebGL entry.
+
+**S3TC.** The probe compares extension names against
+`GL_EXT_texture_compression_s3tc`, which WebGL never reports. Fixing the name
+alone would be unsafe. At High and Medium specs native asks the *driver* to
+compress most images (`glTexImage2D` with a DXT internal format and RGBA
+data). WebGL has no such path, and a CPU encoder would not reproduce the
+native driver's blocks. Only precompressed `.dds` images could match native
+exactly. The web build qualifies as Ultra by default (uncompressed, like
+native on current machines), so this was left unchanged.
+
+**Float sine and cosine.** Delta 2a's random seed differed from native from
+frame 2. A zombie's head axis came from `cosf(315°)`, where musl and the native
+UCRT differ by one ulp; the eye height and then the aim pitch changed
+(-1.1e-7 versus -0), so the AI drew a different number of random values.
+
+A sweep of the float functions found many such differences:
+
+| musl vs UCRT (float) | inputs differing |
+| --- | ---: |
+| `tanf` | 13% |
+| `atan2f` | 12% |
+| `atanf` | 5.5% |
+| `asinf`, `acosf` | ~4.8% |
+| `logf` | 0.6% |
+| `sinf`, `cosf` | ~0.2% |
+| `expf`, `powf` | ~0.07% |
+
+The native build uses AMD's win-libm FMA3 code. `idlib/math/WebMath.h` now
+ports `sinf` and `cosf` from it, operation by operation, and
+`sys/web_libm.cpp` defines the web executable's `sinf`, `cosf` and `sincosf`
+with them. Being an object file, not an archive member, it replaces musl's
+symbols everywhere. The ports matched native for 1,053,213 dense inputs and
+21,594,438 strided inputs over [-8, 8]. `tests/web_trig_check.py` checks 4,637
+checked-in native results; it links `web_libm.cpp`, so it also fails if
+musl's symbols win (19 mismatches without it).
+
+After the change all twelve scene seeds match native, including Delta 2a over
+61 checkpoints. The combat, ranged-combat, BFG multi-beam, melee, player-death
+and explosive-weapon fixtures still pass. Captures changed only through
+simulation; native MAE stayed equal or improved (imp 0.011258 → 0.011233).
+
+The other functions were not changed, because no fixture diverges through them
+yet. Evaluating in double and rounding once matches UCRT for `tanf`, `atan2f`,
+`atanf`, `expf` and `powf` to within 0.02% of inputs, but not for `asinf`,
+`acosf` or `logf`. Exact parity needs ports like the existing
+`WebRotationACos`.
+
+**Verification.** 91 GPU shader checks, 135 extracted renderer-state checks,
+118 timing/input/graphics checks, the shell regressions and the trig check
+pass. The final build's fifteen captures are pixel-identical to the
+`sinf`/`cosf` build's. All precision harnesses pass with `-msimd128`. Evidence (ignored):
+`build-web/bench/captures/` and `build-web/bench/*-stdout.json`.
+
+### Locked 30 and 60 FPS and frame-rate settings (2026-10-06)
+
+**Measurement.** `webperf` now prints two pacing lines: the rendered-frame
+interval (p50/p95/max and the share within 2.5 ms of the cap's interval) and
+how many game tics each rendered frame ran.
+
+**Drift.** Displays rarely refresh at exactly 60.000 Hz. The bench display ran
+at 16.65 ms, a little faster than the cap's nominal 16.67 ms. The previous
+deadline gate advanced by the nominal interval, so its deadline drifted
+against the callbacks until one fell outside the tolerance, dropping a frame
+every few seconds at the 60 cap (one 33 ms frame per 300). The 30 cap drifted
+the same way, more slowly.
+
+**Locked pacing.** `WebFramePacing.h` now estimates the refresh over the
+last 63 callbacks: elapsed time divided by the refreshes it spans, where the
+median interval decides how many refreshes each interval covers. Stalled
+frames and delayed callbacks therefore do not bias it. An averaged estimate
+read a 60 Hz display as 61 Hz after map loads; this one stays within 60.0–60.3
+Hz there. It follows a display change within about a second. When the cap
+divides the refresh within 3% (30 or 60 FPS at 60, 120 or 240 Hz, including
+59.94/119.88 Hz), the cap is locked:
+
+- A cap equal to the refresh renders every callback. A callback that arrives
+  early after a stalled frame is no longer dropped.
+- Larger multiples nudge the deadline toward the callbacks they render (a
+  small phase-locked loop) and accept callbacks within half a refresh, so
+  every frame lasts the same number of refreshes.
+- A frame that renders a whole refresh late (the browser skipped one)
+  restarts the schedule, so the next frame lasts a full interval instead of
+  one refresh.
+- Other rates (75, 144 Hz) keep the previous deadline gate and the capped
+  average rate; their frames cannot be evenly spaced.
+
+Live hangar simulation, 600-frame samples in headless Chrome at 60 Hz:
+
+| Cap | Frames within 2.5 ms of the interval | Skipped callbacks | Worst frame |
+| --- | ---: | ---: | ---: |
+| 60, before | 99.7% | 1 per 300 (drift) | 33 ms |
+| 60, after | 99.5–100% | 0 | 18.2–20.5 ms |
+| 30, after | 94.8–100% | as intended (every other) | 35.4 ms; 68.6 ms in a round with a system stall |
+
+Remaining misses are long frames (CPU or system stalls), not pacing. At the
+30 cap, 1–4 frames in 600 still run one tic: tic boundaries fall on whole
+16 ms steps, so a 33.3 ms frame occasionally spans one.
+
+**Game tics.** The stock engine runs game tics every 16 ms (62.5 Hz), not
+16.67 ms. At 60 FPS about one frame in 24 therefore runs two tics; at 30 FPS
+one frame in 12 runs three. Native Doom 3 at 60 Hz behaves identically, and
+changing the tic length would break native simulation parity, so it is
+unchanged.
+
+**Power saving.** Chrome's Energy Saver (on battery, or below 20% charge)
+delivers 30 animation callbacks per second. A 60 FPS cap then renders 30 FPS.
+Benches must disable it in the scratch profile's `Local State`
+(`performance_tuning.battery_saver_mode.state = 0`); headless Chrome otherwise
+measures 30 Hz. Keep the bench profile path short on Windows: IndexedDB fails
+inside a deeply nested `--user-data-dir` ("Internal error opening backing
+store"), and the page then reports that browser saving is unavailable.
+
+**Settings.** The Graphics options panel shows, live, what the selected cap
+does on this display, from the refresh the engine measures
+(`Web_GetDisplayRefresh`, `Web_GetLockedRefreshes`):
+
+- "60 FPS is locked to every refresh of this 60 Hz display."
+- "30 FPS is locked: each frame lasts 2 refreshes of this 60 Hz display."
+- "This 144 Hz display is not a multiple of 60 FPS, so frames cannot be
+  evenly spaced. Unlocked may look smoother."
+- At 30 callbacks per second: "60 FPS is not reachable here. The browser is
+  delivering about 30 frames per second; battery or energy-saving settings
+  often cause this."
+
+A Frame rate counter checkbox toggles `com_showFPS`. On the web the counter
+averages 30 frames of the browser's sub-millisecond clock. The stock counter
+averaged four frames of whole milliseconds, so a locked 60 read 59 to 62;
+captured counters now read 60 at the 60 cap and 30 at the 30 cap.
+
+**Verification.**
+
+- Timing harness: 152 checks, 29 new. They cover a minute at 59.94, 60, 60.02,
+  119.88, 120 and 240 Hz with up to a third of a refresh of callback delay,
+  144 Hz averages, 30 Hz power-saving callbacks, a stall, a skipped refresh,
+  a display change, a busy main thread's effect on the refresh estimate, the
+  FPS-counter option and the refresh readback. The locking and skipped-refresh
+  checks fail with their fixes disabled.
+- Profiler harness: 29 checks (4 new pacing checks).
+- Shell regression: covers the counter and each status message.
+- Unchanged: the fifteen render captures (pixel-identical), the combat
+  fixture and the native Windows build.
+
+The ImGui settings menu (`Dhewm3SettingsMenu.cpp`) remains disabled on the
+web; its desktop video and audio options do not apply in a browser.
+
+### Fullscreen (2026-10-06)
+
+The game can run fullscreen in the browser from three places:
+
+- the **Fullscreen** button under the game (it becomes **Exit fullscreen**);
+- **Alt+Enter** while playing, as in the Windows build;
+- the stock **System** menu's display-mode row (Windowed/Fullscreen).
+
+The console cvar `r_webFullscreen` (not archived) behaves the same way.
+
+**How it works.**
+
+- The canvas itself goes fullscreen through the Fullscreen API (with the
+  WebKit prefix for Safari).
+- SDL resizes the drawing buffer to the fullscreen size, so the engine
+  renders at the screen's own aspect ratio: widescreen with a wider field of
+  view and 4:3 menus (`r_scaleMenusTo43`), as the native fullscreen build
+  does. Leaving fullscreen restores the 4:3 canvas.
+- While fullscreen, the page's scrollbar is hidden; it would otherwise make
+  `100vw` wider than the visible area.
+- Browsers allow fullscreen only shortly after a click or key press. The menu
+  row and Alt+Enter set `r_webFullscreen`, and the next animation frame asks
+  the page; the triggering key or click still counts.
+- The page reports the browser's actual state back (`Web_SetFullscreenState`),
+  so the menu, button and cvar stay correct when the user leaves with Esc or a
+  request is blocked. A blocked request explains itself under the game and
+  resets the setting.
+- On web, Alt+Enter no longer flips `r_fullscreen` and runs a video restart,
+  which cannot enter or leave browser fullscreen.
+- A refusal is reported once even though Chrome both rejects the request and
+  fires `fullscreenerror`. Safari reports it with `webkitfullscreenerror`. A
+  later refused attempt is reported again.
+- The button's label states the action ("Fullscreen" / "Exit fullscreen")
+  without `aria-pressed`, which would contradict it for screen readers.
+
+**Click release during the change.** A click on the menu's display-mode row
+starts fullscreen on the next frame, before the mouse button is released. The
+browser then delivers that release to the page root instead of the canvas.
+The shell kept releases outside the canvas away from SDL, so SDL treated the
+button as still held and ignored the next press: after entering fullscreen
+from the menu, the first click did nothing. The shell now remembers which
+buttons were pressed on the game and always lets their release reach SDL. A
+release with no matching game press is still withheld.
+
+**Esc.** In Chrome and Edge the page locks the Escape key while fullscreen
+(Keyboard Lock API). A short press still opens the game menu, and holding Esc
+leaves fullscreen. Firefox and Safari leave fullscreen on the first Esc. How to
+play explains both.
+
+**Cost.** Fullscreen renders more pixels. At 1902x1071 in headless Chrome on
+the bench's integrated GPU, the frozen hangar view took 17.7–36 ms GPU per
+frame, against 8.7–13.4 ms in the 1045x783 window. GPU clocks varied between
+runs. That is about 2.5× the pixels, so weaker GPUs may not hold 60 FPS
+fullscreen. High-DPI screens multiply the pixel count again.
+
+**Verification.**
+
+- In headless Chrome, with real mouse and key events, each of these entered
+  or left fullscreen as expected, with the drawing buffer following the
+  screen and the engine setting matching the browser:
+  - the button;
+  - Alt+Enter (out and back in);
+  - `set r_webFullscreen 0`;
+  - clicking the System menu's display-mode row, three enter/leave cycles in
+    a row (this check found the click-release bug).
+- The 1920x1080 capture shows a correct widescreen view.
+- Shell regression: request, prefixed duplicate events, Escape lock,
+  a lock granted after leaving, engine-requested exit, single and repeated
+  refusals, unsupported browser, and game-click releases delivered outside
+  the canvas.
+- Timing harness: source checks that the main loop forwards fullscreen
+  changes before frame pacing can skip a callback, and that only the web
+  build's Alt+Enter changes.
+- Unchanged: all twelve campaign captures are pixel-identical and every seed
+  still matches native.
+- Menu harness (112 checks): the display-mode row binds `r_webFullscreen`.
+- The native build compiles; its Alt+Enter path is unchanged.
+
+### 60 FPS audit, windowed and fullscreen (2026-10-06)
+
+Earlier pacing work measured frozen views. This audit loads each campaign
+scene with live simulation (`g_stopTime 0`, real-time tics) at the 60 FPS cap.
+It records pacing (`webperf`) and GPU time per pass (`webgpu`) at the
+windowed size (1003x752) and at a fullscreen size (1920x1080).
+
+**Vertex-array churn (fixed).** Live scenes re-upload dynamic geometry every
+frame at new buffer offsets: shadow volumes, moving and deformed models. The
+vertex-array cache keyed each upload as a new layout and created about 27
+vertex arrays per frame that were never used again. In Enpro, live, that cost
+22 ms of CPU per frame (31.5 FPS), against 11.4 ms with vertex arrays
+disabled. Buffers uploaded within the last three frames now draw through the
+default vertex array, and the vertex-state fast path re-checks once per frame,
+so stable geometry still gets cached arrays. Enpro now creates no vertex
+arrays per frame and spends 9.5–11.6 ms of CPU, on a par with vertex arrays
+off. Captures are unchanged (all fifteen views pixel-identical, seeds equal to
+native). Five new state checks cover the rule.
+
+**Render resolution (new).** Heavy scenes are GPU-bound on the integrated
+GPU, and fullscreen roughly doubles the pixel count.
+
+- **Settings:** Graphics options and the in-game System menu now offer Full,
+  75% and 50% render resolution (`r_webRenderScale`, archived, default Full).
+  The menu's former read-only "Render size: Browser" row now holds the
+  choice, so it can be changed while fullscreen.
+- **Mechanism:** SDL sizes the drawing buffer as the canvas's CSS size times
+  `devicePixelRatio`. The page scales the ratio SDL reads and fires a resize,
+  and the browser upscales the canvas. Mouse mapping is unaffected because
+  SDL maps CSS pixels. HiDPI screens keep their own ratio; the scale applies
+  on top of it.
+- **Defaults:** parity captures always use Full.
+
+**Frame-rate feedback.** While Graphics options is open, the status line now
+adds the rate the game actually renders (over the last second). When the
+applied cap is not met it suggests a lower render resolution or 30 FPS
+(`Web_GetRenderedFrameRate`).
+
+**Hitch attribution.** `webperf` now reports the slowest sampled frame with its
+own phase times: events, async, commands, session with game tics, and draw
+split into scene generation and submit. In the heavy scenes the worst frames
+(40–230 ms) come from three places:
+
+- scene generation spikes (Enpro, up to 89 ms: interactions and shadow
+  volumes for newly visible lights and models);
+- game-tic catch-up after a slow frame (imp, 3–6 tics in one frame, as on
+  native);
+- draw time inflated while the CPU waits for a busy GPU.
+
+None is a pacing fault. The tic catch-up is the stock engine's rule and
+stays.
+
+**Results.** These were measured with the machine at 100% CPU from other
+programs, so they are lower and noisier than earlier numbers.
+
+| Scene (live, 60 cap) | Windowed, Full | 1080p, Full | 1080p, 75% | 1080p, 50% |
+| --- | ---: | ---: | ---: | ---: |
+| mc_underground, alphalabs1, delta2a, recycling1 | 58.5–59.8 FPS | 55–60 (earlier run) | — | — |
+| heat_glass | 39.1 | 35.0 | 37.3 | 57.7 |
+| hell1 | 24.6 | 13.7 | 21.8 | 41.4 |
+| delta5 | 35.9 | 24.4 | 25.9 | 33.8 |
+| enpro | 27.2 | 11.9 | 33.9 | 28.6 |
+| imp | 16.8 | 14.9 | 17.3 | 20.7 |
+
+- **Lighter scenes:** they hold the 60 cap windowed and fullscreen.
+- **GPU-bound scenes:** render resolution recovers much of the loss at 1080p
+  (heat_glass reaches about 58 FPS at 50%; hell1 triples).
+- **CPU-bound scenes:** Enpro, delta5 and imp stay CPU-bound at 14–28 ms per
+  frame on this laptop. On an idle machine earlier the same build reached
+  44–52 FPS in Enpro windowed.
+- **Next step for those:** the plan's Phase 4 (a worker backend), not
+  further per-call tuning.
+
+**Bench.** The shell keeps only the last 200,000 characters of console text,
+so long multi-scene runs lost their place and timed out. `bench.js` now waits
+and slices relative to unique echoed marks (`B.mark()`, `B.after()`).
+`run_console_fixture.js` fails clearly if a fixture's log outgrows the buffer.
+
+**Verification.**
+
+- Renderer state checks: 140 (5 new).
+- Timing and graphics checks: 159. New ones cover render-resolution
+  validation, the bridge's cvar set, the rendered-rate readout and the
+  per-frame order of fullscreen and render-scale updates.
+- Profiler checks: 30 (slowest-frame breakdown).
+- Menu checks: 113.
+- Shell regressions: render resolution, pixel-ratio scaling and the rate
+  advice.
+- Browser: in headless Chrome the in-game Render resolution row cycled the
+  drawing buffer through 753x565, 502x376 and back to 1005x753, with the
+  canvas size unchanged.
+
+### Windows and web audit (2026-10-06)
+
+**Windows.**
+
+- The native build of this branch compiles without new warnings; four
+  pre-existing signed/unsigned warnings remain in untouched code.
+- Run through `tests/web_bench/native_capture.py`, it renders all twelve
+  campaign views pixel-identical to the original native references, with
+  identical `RENDER_STATE` and the same 1,226 stock data warnings.
+- `native_capture.py` now resolves `--exe` before running the engine from
+  its own directory; a relative path previously failed.
+
+**Web.**
+
+- Over two maps (Mars City 1 and Alpha Labs 1), the web build logs exactly
+  the 41 distinct warnings the native build logs. All are stock data issues
+  (missing per-size AAS files, unused GUI sounds, physics placement
+  warnings). Neither build logs WebGL errors.
+- Browser console: the only remaining messages are Chrome's autoplay notices
+  when the bench starts the engine without a user gesture.
+- The shell had no favicon, so every page load requested a missing
+  `/favicon.ico`. It now has an inline icon.
+- Layout: neither the setup screen nor the play screen with every panel open
+  overflows horizontally at 360 or 1280 pixels.
+  - Graphics options now groups its toggles on one row and its values on
+    another, instead of pushing Texture filtering onto its own row.
+  - Filtering choices read "2×" to "16×"; the help line says they are
+    anisotropic.
+  - Checkboxes are 18 pixels instead of 13.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,
@@ -2241,3 +2844,9 @@ the earlier model-profiling image checks do not validate this later change.
   Emscripten toolchain via `$env{EMSDK}`); `-DWEB_PRELOAD_DIR=` for testing.
 - `.github/workflows/web.yml` — validates the shell and builds the engine with
   pinned Emscripten 4.0.23, without game data.
+- `tests/web_bench/` — local licensed-data bench: headless Chrome driver,
+  render and console fixture runners, native reference capture, GPU timing,
+  capture sink (see the 2026-10-06 audit).
+- `tests/render_scenes_parity.cfg` — twelve campaign render views.
+- `neo/sys/web_libm.cpp`, `tests/web_trig_check.py`, `tests/trig_native.txt` —
+  UCRT-exact `sinf`/`cosf` for the web build and their native fixtures.

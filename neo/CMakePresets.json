@@ -122,7 +122,8 @@
         "CORE": "ON",
         "DEDICATED": "OFF",
         "IMGUI": "OFF",
-        "SDL2": "ON"
+        "SDL2": "ON",
+        "WEB_SIMD": "ON"
       }
     },
     {

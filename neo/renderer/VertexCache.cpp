@@ -49,6 +49,32 @@ static vertCache_t * Web_FindCompatibleHeader( vertCache_t *head, bool indexBuff
 	}
 	return head->next;
 }
+static idCVar r_webBatchFrameTemp("r_webBatchFrameTemp", "1", CVAR_RENDERER | CVAR_BOOL,
+	"stage per-frame dynamic vertices in memory and upload each frame's range once");
+
+/*
+==============
+idVertexCache::WebFlushFrameTemp
+
+Uploads the staged range of the temp buffer holding this block. Every draw
+reaches temp data through Position(), so data is uploaded before any use,
+including when backend commands run before the frame ends.
+==============
+*/
+void idVertexCache::WebFlushFrameTemp( const vertCache_t *block ) {
+	for ( int i = 0; i < NUM_VERTEX_FRAMES; i++ ) {
+		if ( tempBuffers[i]->vbo != block->vbo ) {
+			continue;
+		}
+		const int start = webTempDirtyStart[i], end = webTempDirtyEnd[i];
+		if ( end > start ) {
+			webTempDirtyStart[i] = webTempDirtyEnd[i] = 0;
+			qglBindBufferARB( GL_ARRAY_BUFFER_ARB, block->vbo );
+			qglBufferSubDataARB( GL_ARRAY_BUFFER_ARB, start, (GLsizeiptrARB)( end - start ), webTempStaging[i] + start );
+		}
+		return;
+	}
+}
 #endif
 
 /*
@@ -137,6 +163,11 @@ void *idVertexCache::Position( vertCache_t *buffer ) {
 				common->Printf( "GL_ARRAY_BUFFER_ARB = %i (%i bytes)\n", buffer->vbo, buffer->size );
 			}
 		}
+#ifdef __EMSCRIPTEN__
+		if ( buffer->tag == TAG_TEMP ) {
+			WebFlushFrameTemp( buffer );
+		}
+#endif
 		if ( buffer->indexBuffer ) {
 			qglBindBufferARB( GL_ELEMENT_ARRAY_BUFFER_ARB, buffer->vbo );
 		} else {
@@ -199,6 +230,12 @@ void idVertexCache::Init() {
 		// unlink these from the static list, so they won't ever get purged
 		tempBuffers[i]->next->prev = tempBuffers[i]->prev;
 		tempBuffers[i]->prev->next = tempBuffers[i]->next;
+#ifdef __EMSCRIPTEN__
+		if ( tempBuffers[i]->vbo && !webTempStaging[i] ) {
+			webTempStaging[i] = (byte *)Mem_Alloc( frameBytes );
+		}
+		webTempDirtyStart[i] = webTempDirtyEnd[i] = 0;
+#endif
 	}
 	Mem_Free( junk );
 
@@ -448,6 +485,22 @@ vertCache_t	*idVertexCache::AllocFrameTemp( void *data, int size ) {
 	block->vbo = tempBuffers[listNum]->vbo;
 
 	if ( block->vbo ) {
+#ifdef __EMSCRIPTEN__
+		if ( r_webBatchFrameTemp.GetBool() && webTempStaging[listNum] ) {
+			SIMDProcessor->Memcpy( webTempStaging[listNum] + block->offset, data, size );
+			const int end = block->offset + size;
+			if ( webTempDirtyEnd[listNum] <= webTempDirtyStart[listNum] ) {
+				webTempDirtyStart[listNum] = block->offset;
+				webTempDirtyEnd[listNum] = end;
+			} else {
+				webTempDirtyStart[listNum] = Min( webTempDirtyStart[listNum], (int)block->offset );
+				webTempDirtyEnd[listNum] = Max( webTempDirtyEnd[listNum], end );
+			}
+			return block;
+		}
+		// Uploading immediately must not be overwritten by an older staged range.
+		WebFlushFrameTemp( block );
+#endif
 		qglBindBufferARB( GL_ARRAY_BUFFER_ARB, block->vbo );
 		qglBufferSubDataARB( GL_ARRAY_BUFFER_ARB, block->offset, (GLsizeiptrARB)size, data );
 	} else {
@@ -502,6 +555,10 @@ void idVertexCache::EndFrame() {
 
 	currentFrame = tr.frameCount;
 	listNum = currentFrame % NUM_VERTEX_FRAMES;
+#ifdef __EMSCRIPTEN__
+	// Allocations from this buffer's previous use are no longer referenced.
+	webTempDirtyStart[listNum] = webTempDirtyEnd[listNum] = 0;
+#endif
 	staticAllocThisFrame = 0;
 	staticCountThisFrame = 0;
 	dynamicAllocThisFrame = 0;

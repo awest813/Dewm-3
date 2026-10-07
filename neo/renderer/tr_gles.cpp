@@ -33,6 +33,8 @@
  */
 
 #include <set>
+#include <unordered_map>
+#include <vector>
 #include <algorithm>
 #include "sys/platform.h"
 #include "framework/Common.h"
@@ -46,26 +48,58 @@ static GLuint g_depthCopyFramebuffer = 0;
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #endif
+#ifndef GL_TIME_ELAPSED_EXT
+#define GL_TIME_ELAPSED_EXT 0x88BF
+#endif
+#ifndef GL_GPU_DISJOINT_EXT
+#define GL_GPU_DISJOINT_EXT 0x8FBB
+#endif
 
 struct webPerf_t {
 	int remaining, samples;
 	bool warmup;
 	double started, cpu[600];
+	// Pacing: start-to-start interval of rendered frames and game tics each
+	// rendered frame ran (index 3 counts three or more).
+	double intervals[600], lastRendered;
+	int intervalCount, frameTics, ticFrames[4];
+	// Slowest sampled frame: CPU time, its top-level phases (events,
+	// commands, session, draw, async) and game tics, to attribute hitches.
+	double slowestMs, slowest[8], frameStartPhases[7], frameStartAsync;
+	int slowestTics;
 	double asyncMs;
 	double phases[WEB_RENDER_PHASE_COUNT];
 	unsigned int phaseCalls[WEB_RENDER_PHASE_COUNT];
 	unsigned int draws, indexQueries, programBinds, uniformUploads, bufferCreates;
-	unsigned int uniformWrites, bufferBinds, attribWrites;
+	unsigned int uniformWrites, bufferBinds, attribWrites, vertexArrayBinds, vertexArrayCreates;
 	unsigned int callbacks, skippedCallbacks;
 	double lightInputFaces, lightKeptFaces;
 	unsigned int lightTriangleBuilds, fusedBoundBuilds;
+	unsigned int bufferDataCalls, bufferSubDataCalls, cpuIndexDraws;
+	unsigned int activeTextureCalls, stencilCalls;
+	double uploadBytes;
 };
 static webPerf_t g_webPerf = {};
+// Rendered browser frames (R_GLES_GpuFrame); dates buffer uploads.
+static unsigned int g_glesFrame = 1;
 
 extern "C" void R_GLES_PerfCallback( bool rendered ) {
 	if (!g_webPerf.remaining) return;
 	++g_webPerf.callbacks;
-	if (!rendered) ++g_webPerf.skippedCallbacks;
+	if (!rendered) {
+		++g_webPerf.skippedCallbacks;
+		return;
+	}
+	const double now = emscripten_get_now();
+	if (!g_webPerf.warmup && g_webPerf.lastRendered > 0 && g_webPerf.intervalCount < 600) {
+		g_webPerf.intervals[g_webPerf.intervalCount++] = now - g_webPerf.lastRendered;
+	}
+	g_webPerf.lastRendered = now;
+}
+
+// Game tics run by the session this frame (idSessionLocal::Frame).
+extern "C" void R_GLES_PerfTics( int tics ) {
+	if (g_webPerf.remaining) g_webPerf.frameTics += tics;
 }
 
 extern "C" void R_GLES_PerfAsync( double cpuMs ) {
@@ -105,14 +139,33 @@ void R_GLES_PerfFrame( double cpuMs ) {
 		g_webPerf.asyncMs = 0;
 		g_webPerf.bufferCreates = 0;
 		g_webPerf.uniformWrites = g_webPerf.bufferBinds = g_webPerf.attribWrites = 0;
+		g_webPerf.vertexArrayBinds = g_webPerf.vertexArrayCreates = 0;
 		g_webPerf.callbacks = g_webPerf.skippedCallbacks = 0;
 		g_webPerf.lightInputFaces = g_webPerf.lightKeptFaces = 0;
 		g_webPerf.lightTriangleBuilds = g_webPerf.fusedBoundBuilds = 0;
+		g_webPerf.bufferDataCalls = g_webPerf.bufferSubDataCalls = g_webPerf.cpuIndexDraws = 0;
+		g_webPerf.activeTextureCalls = g_webPerf.stencilCalls = 0;
+		g_webPerf.uploadBytes = 0;
+		g_webPerf.intervalCount = g_webPerf.frameTics = 0;
+		g_webPerf.slowestMs = 0;
+		memset(g_webPerf.frameStartPhases, 0, sizeof(g_webPerf.frameStartPhases));
+		g_webPerf.frameStartAsync = 0;
+		memset(g_webPerf.ticFrames, 0, sizeof(g_webPerf.ticFrames));
 		memset(g_webPerf.phases, 0, sizeof(g_webPerf.phases));
 		memset(g_webPerf.phaseCalls, 0, sizeof(g_webPerf.phaseCalls));
 		return;
 	}
 	g_webPerf.cpu[g_webPerf.samples++] = cpuMs;
+	++g_webPerf.ticFrames[g_webPerf.frameTics < 3 ? g_webPerf.frameTics : 3];
+	if (cpuMs > g_webPerf.slowestMs) {
+		g_webPerf.slowestMs = cpuMs;
+		for (int i = 0; i < 7; ++i) g_webPerf.slowest[i] = g_webPerf.phases[i] - g_webPerf.frameStartPhases[i];
+		g_webPerf.slowest[7] = g_webPerf.asyncMs - g_webPerf.frameStartAsync;
+		g_webPerf.slowestTics = g_webPerf.frameTics;
+	}
+	for (int i = 0; i < 7; ++i) g_webPerf.frameStartPhases[i] = g_webPerf.phases[i];
+	g_webPerf.frameStartAsync = g_webPerf.asyncMs;
+	g_webPerf.frameTics = 0;
 	if (--g_webPerf.remaining) return;
 	double elapsed = emscripten_get_now() - g_webPerf.started, total = 0;
 	for (int i = 0; i < g_webPerf.samples; ++i) total += g_webPerf.cpu[i];
@@ -131,6 +184,8 @@ void R_GLES_PerfFrame( double cpuMs ) {
 	common->Printf("Web perf: %.1f new GPU buffers per frame\n", g_webPerf.bufferCreates / frames);
 	common->Printf("Web perf: %.1f uniform writes, %.1f buffer binds, %.1f attribute writes per frame\n",
 		g_webPerf.uniformWrites / frames, g_webPerf.bufferBinds / frames, g_webPerf.attribWrites / frames);
+	common->Printf("Web perf: %.1f vertex array binds, %.1f vertex arrays created per frame\n",
+		g_webPerf.vertexArrayBinds / frames, g_webPerf.vertexArrayCreates / frames);
 	common->Printf("Web perf: draw %.2f ms begin, %.2f ms scene generation, %.2f ms submit/cleanup\n",
 		g_webPerf.phases[4] / frames, g_webPerf.phases[5] / frames, g_webPerf.phases[6] / frames);
 	common->Printf("Web perf: %.2f ms backend, %.2f ms triangle cleanup, %.2f ms vertex-cache cleanup\n",
@@ -148,10 +203,193 @@ void R_GLES_PerfFrame( double cpuMs ) {
 	common->Printf("Web perf: light triangles %.1f input / %.1f kept per frame; %.1f builds (%.1f fused bounds)\n",
 		g_webPerf.lightInputFaces / frames, g_webPerf.lightKeptFaces / frames,
 		g_webPerf.lightTriangleBuilds / frames, g_webPerf.fusedBoundBuilds / frames);
+	if (g_webPerf.intervalCount > 0) {
+		// A locked cap should hold one interval; report how many frames did.
+		const int limit = cvarSystem->GetCVarInteger("r_webFrameLimit");
+		double *iv = g_webPerf.intervals;
+		const int n = g_webPerf.intervalCount;
+		std::sort(iv, iv + n);
+		int onCadence = 0;
+		if (limit > 0) {
+			const double target = 1000.0 / limit;
+			for (int i = 0; i < n; ++i) onCadence += iv[i] > target - 2.5 && iv[i] < target + 2.5;
+		}
+		common->Printf("Web pacing: frame interval p50 %.2f ms, p95 %.2f ms, max %.2f ms; %s\n",
+			iv[n / 2], iv[(n * 95 - 1) / 100], iv[n - 1],
+			limit > 0 ? va("%.1f%% within 2.5 ms of the %d FPS interval", 100.0 * onCadence / n, limit) : "unlocked");
+		common->Printf("Web pacing: game tics per frame 0:%d 1:%d 2:%d 3+:%d\n",
+			g_webPerf.ticFrames[0], g_webPerf.ticFrames[1], g_webPerf.ticFrames[2], g_webPerf.ticFrames[3]);
+		common->Printf("Web pacing: slowest frame %.2f ms CPU: %.2f events, %.2f async, %.2f commands, %.2f session (%d tics), %.2f draw (%.2f scene generation, %.2f submit)\n",
+			g_webPerf.slowestMs, g_webPerf.slowest[0], g_webPerf.slowest[7], g_webPerf.slowest[1], g_webPerf.slowest[2],
+			g_webPerf.slowestTics, g_webPerf.slowest[3], g_webPerf.slowest[5], g_webPerf.slowest[6]);
+	}
+	common->Printf("Web perf: uploads %.1f bufferData + %.1f bufferSubData calls, %.1f KB per frame; %.1f CPU-index draws\n",
+		g_webPerf.bufferDataCalls / frames, g_webPerf.bufferSubDataCalls / frames,
+		g_webPerf.uploadBytes / 1024.0 / frames, g_webPerf.cpuIndexDraws / frames);
+	common->Printf("Web perf: %.1f texture-unit selects, %.1f stencil state calls per frame\n",
+		g_webPerf.activeTextureCalls / frames, g_webPerf.stencilCalls / frames);
+}
+
+static int g_dumpSurfaces = 0;	// websurfaces: 1 armed, 2 dumping this frame
+// webpixel: 1 armed, 2 probing this frame; an optional draw range is always reported.
+static int g_pixelProbe = 0, g_pixelX = 0, g_pixelY = 0, g_pixelDraw = 0, g_pixelFirst = 0, g_pixelLastDraw = -1;
+static byte g_pixelLastColor[4];
+
+// webgpu [frames]: GPU time per render pass from timer queries
+// (EXT_disjoint_timer_query_webgl2). Queries run one at a time; a pass ends
+// when the next begins, and "other" covers GUI, 2D and frame work outside 3D
+// views. Results are read frames later, so sampling never waits on the GPU.
+static const char *g_gpuPassNames[WEB_GPU_PASS_COUNT] = {
+	"depth fill", "depth copy", "shadows", "interactions", "ambient/translucent", "fog/blend lights", "post-process", "other"
+};
+struct webGpuQuery_t { GLuint query; int pass; };
+static struct {
+	bool available;
+	int remaining, frames, active, pass;
+	idList<webGpuQuery_t> pending;
+	idList<GLuint> pool;
+	double ms[WEB_GPU_PASS_COUNT];
+	unsigned int disjoint;
+} g_webGpu;
+
+static void GLES_GpuEnd( void ) {
+	if ( g_webGpu.pass < 0 ) return;
+	glEndQuery( GL_TIME_ELAPSED_EXT );
+	g_webGpu.pass = -1;
+}
+
+void R_GLES_GpuPass( int pass ) {
+	if ( !g_webGpu.remaining || pass == g_webGpu.pass ) return;
+	GLES_GpuEnd();
+	webGpuQuery_t q;
+	if ( g_webGpu.pool.Num() ) {
+		q.query = g_webGpu.pool[g_webGpu.pool.Num() - 1];
+		g_webGpu.pool.RemoveIndex( g_webGpu.pool.Num() - 1 );
+	} else {
+		glGenQueries( 1, &q.query );
+	}
+	q.pass = pass;
+	glBeginQuery( GL_TIME_ELAPSED_EXT, q.query );
+	g_webGpu.pending.Append( q );
+	g_webGpu.pass = pass;
+}
+
+static void GLES_GpuCollect( void ) {
+	GLint disjoint = 0;
+	glGetIntegerv( GL_GPU_DISJOINT_EXT, &disjoint );
+	if ( disjoint ) ++g_webGpu.disjoint;
+	while ( g_webGpu.pending.Num() ) {
+		webGpuQuery_t &q = g_webGpu.pending[0];
+		if ( q.pass == g_webGpu.pass && g_webGpu.pending.Num() == 1 ) break;	// still open
+		GLuint ready = 0;
+		glGetQueryObjectuiv( q.query, GL_QUERY_RESULT_AVAILABLE, &ready );
+		if ( !ready ) break;
+		GLuint ns = 0;
+		glGetQueryObjectuiv( q.query, GL_QUERY_RESULT, &ns );
+		if ( !disjoint ) g_webGpu.ms[q.pass] += ns / 1.0e6;
+		g_webGpu.pool.Append( q.query );
+		g_webGpu.pending.RemoveIndex( 0 );
+	}
+}
+
+// Called once per rendered browser frame.
+void R_GLES_GpuFrame( void ) {
+	++g_glesFrame;
+	// websurfaces arms on one frame boundary and dumps the whole next frame.
+	if ( g_dumpSurfaces ) g_dumpSurfaces = g_dumpSurfaces == 1 ? 2 : 0;
+	if ( g_pixelProbe ) {
+		g_pixelProbe = g_pixelProbe == 1 ? 2 : 0;
+		g_pixelDraw = 0;
+		memset( g_pixelLastColor, 0xff, sizeof( g_pixelLastColor ) );
+	}
+	if ( !g_webGpu.active ) return;
+	if ( g_webGpu.remaining ) {
+		R_GLES_GpuPass( WEB_GPU_OTHER );
+		if ( --g_webGpu.remaining == 0 ) GLES_GpuEnd();
+		++g_webGpu.frames;
+	}
+	GLES_GpuCollect();
+	if ( g_webGpu.remaining || g_webGpu.pending.Num() ) return;
+	g_webGpu.active = 0;
+	double total = 0;
+	for ( int i = 0; i < WEB_GPU_PASS_COUNT; i++ ) total += g_webGpu.ms[i];
+	common->Printf( "Web GPU: %d frames, %.2f ms per frame%s\n", g_webGpu.frames, total / g_webGpu.frames,
+		g_webGpu.disjoint ? " (GPU timing was disjoint: some passes were discarded, averages are low)" : "" );
+	for ( int i = 0; i < WEB_GPU_PASS_COUNT; i++ ) {
+		common->Printf( "Web GPU: %-20s %6.2f ms\n", g_gpuPassNames[i], g_webGpu.ms[i] / g_webGpu.frames );
+	}
+}
+
+static void GLES_Pixel_f( const idCmdArgs &args ) {
+	if ( args.Argc() != 3 && args.Argc() != 5 ) {
+		common->Printf( "usage: webpixel <x> <y> [first last]  (framebuffer pixels, origin bottom-left)\n" );
+		return;
+	}
+	g_pixelX = atoi( args.Argv(1) );
+	g_pixelY = atoi( args.Argv(2) );
+	// Optional draw range: report every draw in it, changed or not.
+	g_pixelFirst = args.Argc() == 5 ? atoi( args.Argv(3) ) : 0;
+	g_pixelLastDraw = args.Argc() == 5 ? atoi( args.Argv(4) ) : -1;
+	g_pixelProbe = 1;
+}
+
+static void GLES_Gpu_f( const idCmdArgs &args ) {
+	if ( !g_webGpu.available ) {
+		common->Printf( "Web GPU: EXT_disjoint_timer_query_webgl2 unavailable\n" );
+		return;
+	}
+	if ( g_webGpu.active ) {
+		common->Printf( "Web GPU: a sample is already running\n" );
+		return;
+	}
+	g_webGpu.remaining = args.Argc() > 1 ? idMath::ClampInt( 10, 600, atoi( args.Argv(1) ) ) : 120;
+	g_webGpu.active = 1;
+	g_webGpu.frames = 0;
+	g_webGpu.pass = -1;
+	g_webGpu.disjoint = 0;
+	memset( g_webGpu.ms, 0, sizeof( g_webGpu.ms ) );
+	common->Printf( "Web GPU: sampling %d frames\n", g_webGpu.remaining );
+}
+
+// websurfaces [x1 y1 x2 y2]: for every view of the next rendered frame, list
+// the draw surfaces whose scissor overlaps the region (view pixels, origin
+// bottom-left; default everything). Diagnostic only; identifies the materials
+// behind native/web image differences.
+static idScreenRect g_dumpRegion;
+static void GLES_Surfaces_f( const idCmdArgs &args ) {
+	g_dumpRegion.Clear();
+	if ( args.Argc() == 5 ) {
+		g_dumpRegion.x1 = atoi( args.Argv(1) ); g_dumpRegion.y1 = atoi( args.Argv(2) );
+		g_dumpRegion.x2 = atoi( args.Argv(3) ); g_dumpRegion.y2 = atoi( args.Argv(4) );
+	} else {
+		g_dumpRegion.x1 = g_dumpRegion.y1 = -32768;
+		g_dumpRegion.x2 = g_dumpRegion.y2 = 32767;
+	}
+	g_dumpSurfaces = 1;
+}
+
+void R_GLES_DumpDrawSurfs( const viewDef_t *view ) {
+	if ( g_dumpSurfaces != 2 || view == NULL ) return;
+	common->Printf( "WEB_SURFACES view %d%s, %d surfaces\n", view->renderView.viewID,
+		view->isSubview ? " (subview)" : "", view->numDrawSurfs );
+	for ( int i = 0; i < view->numDrawSurfs; i++ ) {
+		const drawSurf_t *surf = view->drawSurfs[i];
+		const idScreenRect &r = surf->scissorRect;
+		if ( r.x2 < g_dumpRegion.x1 || r.x1 > g_dumpRegion.x2 || r.y2 < g_dumpRegion.y1 || r.y1 > g_dumpRegion.y2 ) continue;
+		const idRenderEntityLocal *def = surf->space ? surf->space->entityDef : NULL;
+		common->Printf( "WEB_SURFACE %d sort %g stages %d coverage %d entity %d model %s material %s scissor %d %d %d %d indexes %d\n",
+			i, surf->sort, surf->material ? surf->material->GetNumStages() : 0,
+			surf->material ? (int)surf->material->Coverage() : -1, def ? def->index : -1,
+			def && def->parms.hModel ? def->parms.hModel->Name() : "-",
+			surf->material ? surf->material->GetName() : "-", r.x1, r.y1, r.x2, r.y2,
+			surf->geo ? surf->geo->numIndexes : 0 );
+	}
 }
 
 static GLuint g_boundProgram = 0;
 static GLuint g_boundIndexBuffer = 0, g_boundArrayBuffer = 0;
+static idCVar r_webDepthOnlyCopy("r_webDepthOnlyCopy", "1", CVAR_RENDERER | CVAR_BOOL,
+	"copy only depth (not stencil) for the soft-particle _currentDepth image");
 static idCVar r_webStateCache("r_webStateCache", "1", CVAR_RENDERER | CVAR_BOOL,
 	"avoid redundant WebGL uniforms, buffer bindings and vertex array state");
 
@@ -162,13 +400,13 @@ struct glesUniformState_t {
 	GLuint program;
 	GLint location;
 	int kind, bytes;
-	byte value[64];
+	byte value[256];
 };
 static glesUniformState_t g_uniformState[512] = {};
 
 static bool GLES_UniformChanged(GLint location, int kind, int bytes, const void *value) {
 	if (location < 0) return false;
-	if (bytes <= 0 || bytes > 64) return true;
+	if (bytes <= 0 || bytes > 256) return true;
 	glesUniformState_t &state = g_uniformState[((unsigned)location + g_boundProgram * 31u) & 511u];
 	bool same = state.program == g_boundProgram && state.location == location &&
 		state.kind == kind && state.bytes == bytes && !memcmp(state.value, value, bytes);
@@ -199,6 +437,14 @@ static void GLES_UniformMatrix4fv(GLint location, GLsizei count, GLboolean trans
 		glUniformMatrix4fv(location, count, transpose, value);
 }
 
+// Vertex input state. The engine sets client arrays per surface; WebGL
+// calls are made at draw time (GLES_SyncVertexState). Static geometry draws
+// with a cached vertex array object keyed by its complete layout and element
+// buffer, so a draw needs one bindVertexArray instead of a buffer bind and
+// five or six attribute writes. Streamed data (frame-temp vertices, CPU
+// indices), buffers re-uploaded within the last few frames and
+// r_webVertexArrays 0 use the default vertex array, where each attribute is
+// written only when it changes.
 struct glesAttribState_t {
 	bool valid, enabled;
 	GLuint buffer;
@@ -208,36 +454,91 @@ struct glesAttribState_t {
 	GLsizei stride;
 	const void *pointer;
 };
-static glesAttribState_t g_attribState[6] = {};
+static glesAttribState_t g_attribState[6] = {};		// requested by the engine
+static glesAttribState_t g_defaultAttribs[6] = {};	// actual, default vertex array
+static GLuint g_defaultElement = 0;					// actual, default vertex array
+static GLuint g_actualArrayBuffer = 0;
+static GLuint g_currentVao = 0;
+static idCVar r_webVertexArrays("r_webVertexArrays", "1", CVAR_RENDERER | CVAR_BOOL,
+	"draw static geometry with cached WebGL vertex array objects");
+
+enum { GLES_VAO_KEY_WORDS = 2 + 6 * 4 };
+struct glesVaoKey_t {
+	GLuint words[GLES_VAO_KEY_WORDS];	// element buffer, enabled mask, then per attribute
+	bool operator==( const glesVaoKey_t &other ) const { return !memcmp( words, other.words, sizeof( words ) ); }
+};
+struct glesVaoKeyHash_t {
+	size_t operator()( const glesVaoKey_t &key ) const {
+		unsigned int hash = 2166136261u;
+		for ( int i = 0; i < GLES_VAO_KEY_WORDS; i++ ) {
+			hash = ( hash ^ key.words[i] ) * 16777619u;
+		}
+		return hash;
+	}
+};
+static std::unordered_map<glesVaoKey_t, GLuint, glesVaoKeyHash_t> g_vaoCache;
+// Bumped whenever requested vertex state or a buffer's streaming class
+// changes; a draw with an unchanged serial reuses the previous resolution.
+static unsigned int g_vertexStateSerial = 1, g_vertexSyncSerial = 0;
+static bool g_vertexSyncCpu = false, g_vertexSyncArrays = false;
+// Volatile buffers become stable with time alone; re-resolve once per frame.
+static unsigned int g_vertexSyncFrame = 0;
+static GLuint g_vertexSyncVao = ~0u;
+// Per buffer name: last specified with GL_STREAM_DRAW, and the frame of its
+// last glBufferData (+1; 0 = never). Live scenes re-specify dynamic buffers
+// (shadow volumes, deformed and moving models) every frame at new offsets;
+// a vertex array for such data is never drawn again, so creating one per
+// draw cost more than it saved (Enpro, live: 27 creates per frame, 22 ms
+// CPU, against 11 ms without vertex arrays). Buffers specified within the
+// last GLES_STABLE_FRAMES frames use the default vertex array instead.
+struct glesBufferInfo_t {
+	unsigned char stream;
+	unsigned int specifiedFrame;
+};
+static std::vector<glesBufferInfo_t> g_bufferInfo;
+static const unsigned int GLES_STABLE_FRAMES = 3;
+static bool GLES_IsVolatileBuffer( GLuint buffer ) {
+	if ( buffer >= g_bufferInfo.size() ) return false;
+	const glesBufferInfo_t &info = g_bufferInfo[buffer];
+	return info.stream || ( info.specifiedFrame && g_glesFrame + 1 - info.specifiedFrame < GLES_STABLE_FRAMES );
+}
+// Records a glBufferData; a deleted buffer forgets its history.
+static void GLES_NoteBufferData( GLuint buffer, bool stream, bool deleted = false ) {
+	if ( buffer >= g_bufferInfo.size() ) {
+		if ( deleted ) return;
+		g_bufferInfo.resize( buffer + 64, glesBufferInfo_t() );
+	}
+	glesBufferInfo_t &info = g_bufferInfo[buffer];
+	if ( info.stream != ( stream ? 1 : 0 ) ) ++g_vertexStateSerial;
+	info.stream = stream ? 1 : 0;
+	info.specifiedFrame = deleted ? 0 : g_glesFrame + 1;
+}
+static const size_t GLES_MAX_VAOS = 16384;
+
 
 static void GLES_AttribEnabled(GLuint index, bool enabled) {
-	if (index < 6) {
-		bool same = g_attribState[index].enabled == enabled;
+	if (index < 6 && g_attribState[index].enabled != enabled) {
 		g_attribState[index].enabled = enabled;
-		if (r_webStateCache.GetBool() && same) return;
+		++g_vertexStateSerial;
 	}
-	if (enabled) glEnableVertexAttribArray(index);
-	else glDisableVertexAttribArray(index);
-	if (g_webPerf.remaining) ++g_webPerf.attribWrites;
 }
 
 static void GLES_AttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized,
 	GLsizei stride, const GLvoid *pointer) {
-	if (index < 6) {
-		glesAttribState_t &state = g_attribState[index];
-		bool same = state.valid && state.buffer == g_boundArrayBuffer && state.size == size &&
-			state.type == type && state.normalized == normalized && state.stride == stride && state.pointer == pointer;
-		state.valid = true;
-		state.buffer = g_boundArrayBuffer;
-		state.size = size;
-		state.type = type;
-		state.normalized = normalized;
-		state.stride = stride;
-		state.pointer = pointer;
-		if (r_webStateCache.GetBool() && same) return;
+	if (index >= 6) return;
+	glesAttribState_t &state = g_attribState[index];
+	if (state.valid && state.buffer == g_boundArrayBuffer && state.size == size && state.type == type &&
+		state.normalized == normalized && state.stride == stride && state.pointer == pointer) {
+		return;
 	}
-	glVertexAttribPointer(index, size, type, normalized, stride, pointer);
-	if (g_webPerf.remaining) ++g_webPerf.attribWrites;
+	state.valid = true;
+	state.buffer = g_boundArrayBuffer;
+	state.size = size;
+	state.type = type;
+	state.normalized = normalized;
+	state.stride = stride;
+	state.pointer = pointer;
+	++g_vertexStateSerial;
 }
 
 static void GLES_UseProgram( GLuint program ) {
@@ -247,25 +548,87 @@ static void GLES_UseProgram( GLuint program ) {
 	g_boundProgram = program;
 }
 
-// All EBO binds use the default VAO and pass here, including CPU-index draws.
-static void APIENTRY GLES_BindBuffer( GLenum target, GLuint buffer ) {
-	GLuint *binding = target == GL_ELEMENT_ARRAY_BUFFER ? &g_boundIndexBuffer :
-		target == GL_ARRAY_BUFFER ? &g_boundArrayBuffer : NULL;
-	if (binding) {
-		bool same = *binding == buffer;
-		*binding = buffer;
-		if (r_webStateCache.GetBool() && same) return;
-	}
-	glBindBuffer(target, buffer);
+static void GLES_BindArrayBufferNow( GLuint buffer ) {
+	if (r_webStateCache.GetBool() && g_actualArrayBuffer == buffer) return;
+	glBindBuffer(GL_ARRAY_BUFFER, buffer);
+	g_actualArrayBuffer = buffer;
 	if (g_webPerf.remaining) ++g_webPerf.bufferBinds;
 }
 
+static void GLES_BindVertexArrayNow( GLuint vao ) {
+	if (g_currentVao == vao) return;
+	glBindVertexArray(vao);
+	g_currentVao = vao;
+	if (g_webPerf.remaining) ++g_webPerf.vertexArrayBinds;
+}
+
+// The element binding belongs to the bound vertex array. Uploads and CPU-index
+// draws use the default array, so cached arrays keep the binding in their key.
+static void GLES_BindDefaultElementNow( GLuint buffer ) {
+	GLES_BindVertexArrayNow(0);
+	if (r_webStateCache.GetBool() && g_defaultElement == buffer) return;
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffer);
+	g_defaultElement = buffer;
+	if (g_webPerf.remaining) ++g_webPerf.bufferBinds;
+}
+
+// Array and element bindings are recorded and applied when an upload or draw
+// needs them.
+static void APIENTRY GLES_BindBuffer( GLenum target, GLuint buffer ) {
+	if (target == GL_ELEMENT_ARRAY_BUFFER) {
+		if (g_boundIndexBuffer != buffer) ++g_vertexStateSerial;
+		g_boundIndexBuffer = buffer;
+	} else if (target == GL_ARRAY_BUFFER) {
+		g_boundArrayBuffer = buffer;
+	} else {
+		glBindBuffer(target, buffer);
+		if (g_webPerf.remaining) ++g_webPerf.bufferBinds;
+	}
+}
+
+static void GLES_SyncUploadTarget( GLenum target ) {
+	if (target == GL_ARRAY_BUFFER) GLES_BindArrayBufferNow(g_boundArrayBuffer);
+	else if (target == GL_ELEMENT_ARRAY_BUFFER) GLES_BindDefaultElementNow(g_boundIndexBuffer);
+}
+
+static void GLES_DeleteVertexArray( GLuint vao ) {
+	if (g_currentVao == vao) GLES_BindVertexArrayNow(0);
+	glDeleteVertexArrays(1, &vao);
+}
+
+static void GLES_ClearVertexArrays( void ) {
+	++g_vertexStateSerial;
+	for (auto &entry : g_vaoCache) GLES_DeleteVertexArray(entry.second);
+	g_vaoCache.clear();
+}
+
 static void APIENTRY GLES_DeleteBuffers( GLsizei count, const GLuint *buffers ) {
+	++g_vertexStateSerial;
 	for (GLsizei i = 0; i < count; ++i) {
-		if (buffers[i] == g_boundIndexBuffer) g_boundIndexBuffer = 0;
-		if (buffers[i] == g_boundArrayBuffer) g_boundArrayBuffer = 0;
-		for (unsigned int j = 0; j < 6; ++j)
-			if (g_attribState[j].buffer == buffers[i]) g_attribState[j].valid = false;
+		const GLuint buffer = buffers[i];
+		if (buffer == g_boundIndexBuffer) g_boundIndexBuffer = 0;
+		if (buffer == g_boundArrayBuffer) g_boundArrayBuffer = 0;
+		if (buffer == g_actualArrayBuffer) g_actualArrayBuffer = 0;
+		// A deleted buffer can stay attached to a vertex array that is not
+		// bound; rewrite those bindings before the default array is used.
+		if (buffer == g_defaultElement) g_defaultElement = ~0u;
+		for (unsigned int j = 0; j < 6; ++j) {
+			if (g_attribState[j].buffer == buffer) g_attribState[j].valid = false;
+			if (g_defaultAttribs[j].buffer == buffer) g_defaultAttribs[j].valid = false;
+		}
+		for (auto it = g_vaoCache.begin(); it != g_vaoCache.end();) {
+			bool uses = it->first.words[0] == buffer;
+			for (int j = 0; j < 6 && !uses; ++j) {
+				uses = ( it->first.words[1] & (1u << j) ) && it->first.words[2 + j * 4] == buffer;
+			}
+			if (uses) {
+				GLES_DeleteVertexArray(it->second);
+				it = g_vaoCache.erase(it);
+			} else {
+				++it;
+			}
+		}
+		GLES_NoteBufferData(buffer, false, true);
 	}
 	glDeleteBuffers(count, buffers);
 }
@@ -273,6 +636,214 @@ static void APIENTRY GLES_DeleteBuffers( GLsizei count, const GLuint *buffers ) 
 static void APIENTRY GLES_GenBuffers( GLsizei count, GLuint *buffers ) {
 	if (g_webPerf.remaining) g_webPerf.bufferCreates += count;
 	glGenBuffers(count, buffers);
+}
+
+static void APIENTRY GLES_BufferData( GLenum target, GLsizeiptrARB size, const GLvoid *data, GLenum usage ) {
+	if (g_webPerf.remaining) {
+		++g_webPerf.bufferDataCalls;
+		g_webPerf.uploadBytes += (double)size;
+	}
+	GLES_SyncUploadTarget(target);
+	GLuint buffer = target == GL_ELEMENT_ARRAY_BUFFER ? g_boundIndexBuffer : g_boundArrayBuffer;
+	GLES_NoteBufferData(buffer, usage == GL_STREAM_DRAW);
+	glBufferData(target, (GLsizeiptr)size, data, usage);
+}
+
+static void APIENTRY GLES_BufferSubData( GLenum target, GLintptrARB offset, GLsizeiptrARB size, const GLvoid *data ) {
+	if (g_webPerf.remaining) {
+		++g_webPerf.bufferSubDataCalls;
+		g_webPerf.uploadBytes += (double)size;
+	}
+	GLES_SyncUploadTarget(target);
+	glBufferSubData(target, (GLintptr)offset, (GLsizeiptr)size, data);
+}
+
+// Apply the requested vertex state before a draw. CPU-index draws bind the
+// scratch element buffer themselves through the default vertex array.
+static void GLES_SyncVertexState( bool cpuIndices ) {
+	const bool cache = r_webStateCache.GetBool();
+	// Uploads may have bound the default vertex array since the last draw;
+	// only a vertex array this function selected is known to be current.
+	const GLuint vao = g_currentVao;
+	if (cache && g_vertexSyncSerial == g_vertexStateSerial && g_vertexSyncFrame == g_glesFrame && g_vertexSyncCpu == cpuIndices && vao == g_vertexSyncVao
+		&& g_vertexSyncArrays == r_webVertexArrays.GetBool()) {
+		if (vao == 0 && !cpuIndices) GLES_BindDefaultElementNow(g_boundIndexBuffer);
+		return;
+	}
+	g_vertexSyncSerial = g_vertexStateSerial;
+	g_vertexSyncFrame = g_glesFrame;
+	g_vertexSyncCpu = cpuIndices;
+	g_vertexSyncArrays = r_webVertexArrays.GetBool();
+	bool cached = cache && r_webVertexArrays.GetBool() && !cpuIndices
+		&& !GLES_IsVolatileBuffer(g_boundIndexBuffer);
+	glesVaoKey_t key;
+	if (cached) {
+		memset(&key, 0, sizeof(key));
+		key.words[0] = g_boundIndexBuffer;
+		for (int i = 0; i < 6; ++i) {
+			const glesAttribState_t &want = g_attribState[i];
+			if (!want.enabled) continue;
+			if (!want.valid || !want.buffer || GLES_IsVolatileBuffer(want.buffer)) {
+				cached = false;
+				break;
+			}
+			key.words[1] |= 1u << i;
+			key.words[2 + i * 4] = want.buffer;
+			key.words[3 + i * 4] = (GLuint)want.size | ( (GLuint)want.normalized << 4 ) | ( (GLuint)want.type << 8 );
+			key.words[4 + i * 4] = (GLuint)want.stride;
+			key.words[5 + i * 4] = (GLuint)(uintptr_t)want.pointer;
+		}
+	}
+	if (cached) {
+		auto found = g_vaoCache.find(key);
+		if (found != g_vaoCache.end()) {
+			GLES_BindVertexArrayNow(found->second);
+			g_vertexSyncVao = g_currentVao;
+			return;
+		}
+		if (g_vaoCache.size() >= GLES_MAX_VAOS) GLES_ClearVertexArrays();
+		GLuint vao = 0;
+		glGenVertexArrays(1, &vao);
+		GLES_BindVertexArrayNow(vao);
+		for (int i = 0; i < 6; ++i) {
+			if (!( key.words[1] & (1u << i) )) continue;
+			const glesAttribState_t &want = g_attribState[i];
+			GLES_BindArrayBufferNow(want.buffer);
+			glVertexAttribPointer(i, want.size, want.type, want.normalized, want.stride, want.pointer);
+			glEnableVertexAttribArray(i);
+			if (g_webPerf.remaining) g_webPerf.attribWrites += 2;
+		}
+		if (g_boundIndexBuffer) glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_boundIndexBuffer);
+		g_vaoCache[key] = vao;
+		if (g_webPerf.remaining) ++g_webPerf.vertexArrayCreates;
+		g_vertexSyncVao = g_currentVao;
+		return;
+	}
+	GLES_BindVertexArrayNow(0);
+	for (int i = 0; i < 6; ++i) {
+		const glesAttribState_t &want = g_attribState[i];
+		glesAttribState_t &have = g_defaultAttribs[i];
+		if (want.enabled && want.valid) {
+			bool same = have.valid && have.buffer == want.buffer && have.size == want.size && have.type == want.type &&
+				have.normalized == want.normalized && have.stride == want.stride && have.pointer == want.pointer;
+			if (!cache || !same) {
+				GLES_BindArrayBufferNow(want.buffer);
+				glVertexAttribPointer(i, want.size, want.type, want.normalized, want.stride, want.pointer);
+				bool enabled = have.enabled;
+				have = want;
+				have.enabled = enabled;
+				if (g_webPerf.remaining) ++g_webPerf.attribWrites;
+			}
+		}
+		if (!cache || have.enabled != want.enabled) {
+			if (want.enabled) glEnableVertexAttribArray(i);
+			else glDisableVertexAttribArray(i);
+			have.enabled = want.enabled;
+			if (g_webPerf.remaining) ++g_webPerf.attribWrites;
+		}
+	}
+	if (!cpuIndices) GLES_BindDefaultElementNow(g_boundIndexBuffer);
+	g_vertexSyncVao = g_currentVao;
+}
+
+// Interaction setup selects each of five texture units per surface, but many
+// selections are followed by a bind the engine skips as redundant. Only
+// texture-object calls depend on the selected unit, so record the request
+// and send it before the next such call (GLES_SyncActiveTexture).
+static GLenum g_activeTexture = GL_TEXTURE0, g_wantedActiveTexture = GL_TEXTURE0;
+static void GLES_SyncActiveTexture( void ) {
+	if (g_activeTexture == g_wantedActiveTexture) return;
+	g_activeTexture = g_wantedActiveTexture;
+	if (g_webPerf.remaining) ++g_webPerf.activeTextureCalls;
+	glActiveTexture(g_activeTexture);
+}
+static void APIENTRY GLES_ActiveTexture( GLenum texture ) {
+	g_wantedActiveTexture = texture;
+	if (!r_webStateCache.GetBool()) {
+		// Comparison mode: select immediately, as the desktop path does.
+		g_activeTexture = 0;
+		GLES_SyncActiveTexture();
+	}
+}
+static void APIENTRY GLES_TexParameteri( GLenum target, GLenum pname, GLint param ) {
+	GLES_SyncActiveTexture();
+	glTexParameteri(target, pname, param);
+}
+static void APIENTRY GLES_TexSubImage2D( GLenum target, GLint level, GLint x, GLint y, GLsizei width, GLsizei height,
+	GLenum format, GLenum type, const GLvoid *pixels ) {
+	GLES_SyncActiveTexture();
+	glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
+}
+static void APIENTRY GLES_TexImage3D( GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height,
+	GLsizei depth, GLint border, GLenum format, GLenum type, const GLvoid *pixels ) {
+	GLES_SyncActiveTexture();
+	glTexImage3D(target, level, internalFormat, width, height, depth, border, format, type, pixels);
+}
+static void APIENTRY GLES_CompressedTexImage2D( GLenum target, GLint level, GLenum internalFormat, GLsizei width,
+	GLsizei height, GLint border, GLsizei imageSize, const GLvoid *data ) {
+	GLES_SyncActiveTexture();
+	glCompressedTexImage2D(target, level, internalFormat, width, height, border, imageSize, data);
+}
+static void APIENTRY GLES_CopyTexImage2D( GLenum target, GLint level, GLenum internalFormat, GLint x, GLint y,
+	GLsizei width, GLsizei height, GLint border ) {
+	GLES_SyncActiveTexture();
+	glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border);
+}
+// State queries may read the active unit or its bindings.
+static void APIENTRY GLES_GetIntegerv( GLenum pname, GLint *params ) {
+	GLES_SyncActiveTexture();
+	glGetIntegerv(pname, params);
+}
+static void APIENTRY GLES_GetFloatv( GLenum pname, GLfloat *params ) {
+	GLES_SyncActiveTexture();
+	glGetFloatv(pname, params);
+}
+static void APIENTRY GLES_GetBooleanv( GLenum pname, GLboolean *params ) {
+	GLES_SyncActiveTexture();
+	glGetBooleanv(pname, params);
+}
+
+// Shadow volumes set both stencil faces before every draw; consecutive
+// volumes usually repeat them. Index 0 is GL_FRONT, 1 is GL_BACK. The
+// cache starts from a new context's documented defaults.
+static GLenum g_stencilOps[2][3];
+static GLint g_stencilRef;
+static GLenum g_stencilFuncState;
+static GLuint g_stencilMaskState;
+static void GLES_ResetStencilState( void ) {
+	for (int face = 0; face < 2; ++face)
+		g_stencilOps[face][0] = g_stencilOps[face][1] = g_stencilOps[face][2] = GL_KEEP;
+	g_stencilFuncState = GL_ALWAYS;
+	g_stencilRef = 0;
+	g_stencilMaskState = ~0u;
+}
+static bool GLES_StencilOpsChanged( int first, int last, GLenum fail, GLenum zfail, GLenum zpass ) {
+	bool same = true;
+	for (int face = first; face <= last; ++face) {
+		same = same && g_stencilOps[face][0] == fail && g_stencilOps[face][1] == zfail && g_stencilOps[face][2] == zpass;
+		g_stencilOps[face][0] = fail;
+		g_stencilOps[face][1] = zfail;
+		g_stencilOps[face][2] = zpass;
+	}
+	if (r_webStateCache.GetBool() && same) return false;
+	if (g_webPerf.remaining) ++g_webPerf.stencilCalls;
+	return true;
+}
+static void APIENTRY GLES_StencilOp( GLenum fail, GLenum zfail, GLenum zpass ) {
+	if (GLES_StencilOpsChanged(0, 1, fail, zfail, zpass)) glStencilOp(fail, zfail, zpass);
+}
+static void APIENTRY GLES_StencilOpSeparate( GLenum face, GLenum fail, GLenum zfail, GLenum zpass ) {
+	int first = face == GL_BACK ? 1 : 0, last = face == GL_FRONT ? 0 : 1;
+	if (GLES_StencilOpsChanged(first, last, fail, zfail, zpass)) glStencilOpSeparate(face, fail, zfail, zpass);
+}
+static void APIENTRY GLES_StencilFunc( GLenum func, GLint ref, GLuint mask ) {
+	bool same = g_stencilFuncState == func && g_stencilRef == ref && g_stencilMaskState == mask;
+	g_stencilFuncState = func;
+	g_stencilRef = ref;
+	g_stencilMaskState = mask;
+	if (r_webStateCache.GetBool() && same) return;
+	if (g_webPerf.remaining) ++g_webPerf.stencilCalls;
+	glStencilFunc(func, ref, mask);
 }
 
 // WebAssembly checks indirect-call signatures. Casting one void(void) stub
@@ -394,9 +965,7 @@ typedef struct {
 	GLuint prog;
 	GLint mvp, shadowExtrude;
 	GLint lOrigin, vOrigin;
-	GLint projS, projT, projQ, fallS;
-	GLint bumpS, bumpT, diffS, diffT, specS, specT;
-	GLint colMod, colAdd;
+	GLint interEnv; // interaction: vertex program.env[4..17] as one array
 	GLint diffCol, specCol;
 	GLint gamma, alphaTest, flatColor, useVtx, inverseVtx, textureMatrix, secondTexgen;
 	GLint tex[7]; // sampler locations for units 0..6 (interaction)
@@ -425,6 +994,14 @@ static glesProg_t g_progSky = {};
 static glesProg_t g_progHeat = {};
 static glesProg_t g_progColorProcess = {};
 static int g_heatModes[1024] = {};
+// Image name for a texture object (diagnostics only; linear search).
+static const char *GLES_ImageName( GLuint texnum ) {
+	for ( int i = 0; i < globalImages->images.Num(); i++ ) {
+		if ( globalImages->images[i]->texnum == texnum ) return globalImages->images[i]->imgName.c_str();
+	}
+	return "?";
+}
+
 static bool g_colorProcessIds[1024] = {};
 static float g_vertexLocal[32][4] = {};
 static glesProg_t *g_curProg = NULL;
@@ -522,21 +1099,24 @@ static void GLES_FetchCommon( glesProg_t *p ) {
 // Blinn-Phong interaction vertex shader. Same inputs as interaction.vfp:
 // local-space position/normal/tangents, per-stage texgen matrices in u_*S/T
 // (uv' = dot(vec4(uv,0,1), row)), tangent-space light/view vectors.
+// The engine's vertex program.env[4..17] arrive as one array, uploaded with a
+// single call per draw that changed any of them (GLES_FlushInteractionEnv).
 static const char *GLES_VS_INTERACTION =
-	"uniform vec4 u_lOrigin;\n"   // PP_LIGHT_ORIGIN (4), .w unused
-	"uniform vec4 u_vOrigin;\n"   // PP_VIEW_ORIGIN (5)
-	"uniform vec4 u_projS;\n"     // PP_LIGHT_PROJECT_S (6)
-	"uniform vec4 u_projT;\n"     // (7)
-	"uniform vec4 u_projQ;\n"     // (8)
-	"uniform vec4 u_fallS;\n"     // PP_LIGHT_FALLOFF_S (9)
-	"uniform vec4 u_bumpS;\n"     // (10)
-	"uniform vec4 u_bumpT;\n"     // (11)
-	"uniform vec4 u_diffS;\n"     // (12)
-	"uniform vec4 u_diffT;\n"     // (13)
-	"uniform vec4 u_specS;\n"     // (14)
-	"uniform vec4 u_specT;\n"     // (15)
-	"uniform vec4 u_colorMod;\n"  // PP_COLOR_MODULATE (16)
-	"uniform vec4 u_colorAdd;\n"  // PP_COLOR_ADD (17)
+	"uniform vec4 u_ienv[14];\n"
+	"#define u_lOrigin u_ienv[0]\n"    // PP_LIGHT_ORIGIN (4), .w unused
+	"#define u_vOrigin u_ienv[1]\n"    // PP_VIEW_ORIGIN (5)
+	"#define u_projS u_ienv[2]\n"      // PP_LIGHT_PROJECT_S (6)
+	"#define u_projT u_ienv[3]\n"      // (7)
+	"#define u_projQ u_ienv[4]\n"      // (8)
+	"#define u_fallS u_ienv[5]\n"      // PP_LIGHT_FALLOFF_S (9)
+	"#define u_bumpS u_ienv[6]\n"      // (10)
+	"#define u_bumpT u_ienv[7]\n"      // (11)
+	"#define u_diffS u_ienv[8]\n"      // (12)
+	"#define u_diffT u_ienv[9]\n"      // (13)
+	"#define u_specS u_ienv[10]\n"     // (14)
+	"#define u_specT u_ienv[11]\n"     // (15)
+	"#define u_colorMod u_ienv[12]\n"  // PP_COLOR_MODULATE (16)
+	"#define u_colorAdd u_ienv[13]\n"  // PP_COLOR_ADD (17)
 	"out vec2 v_bump;\n"
 	"out vec2 v_diff;\n"
 	"out vec2 v_spec;\n"
@@ -587,7 +1167,8 @@ static const char *GLES_FS_INTERACTION =
 	"  vec3 N = texture( u_bump, v_bump ).agb * 2.0 - 1.0;\n"
 	"  vec3 L = texture( u_cube, v_L ).rgb * 2.0 - 1.0;\n"
 	"  vec3 H = normalize( v_H );\n"
-	"  float fall = texture( u_fall, vec2( v_lproj.w, 0.5 ) ).r;\n"
+	// interaction.vfp multiplies by the whole falloff texel, not only red.
+	"  vec3 fall = texture( u_fall, vec2( v_lproj.w, 0.5 ) ).rgb;\n"
 	"  vec3 light = textureProj( u_proj, vec3( v_lproj.xyz ) ).rgb * fall;\n"
 	"  vec4 diff = texture( u_diff, v_diff );\n"
 	"  vec4 spec = texture( u_spec, v_spec );\n"
@@ -658,16 +1239,20 @@ static const char *GLES_FS_FLAT =
 	"out vec4 o_col;\n"
 	"void main() {\n"
 	"  vec4 vertexColor = vec4(mix(v_col.rgb, 1.0-v_col.rgb, u_inverseVtx), v_col.a);\n"
-	"  vec4 vc = mix( vec4( 1.0 ), vertexColor, u_useVtx ) * u_flatColor;\n"
+	// Fixed-function current and texture-environment colors are clamped to
+	// [0,1]; overbright material stages (rgb 5) rely on that saturation.
+	"  vec4 vc = mix( vec4( 1.0 ), vertexColor, u_useVtx ) * clamp( u_flatColor, 0.0, 1.0 );\n"
 	"  vec4 c;\n"
 	"  if ( u_texgenMode < 0.5 ) {\n"
 	"    c = texture( u_tex0, v_tc ) * vc;\n"
 	"  } else if ( u_texgenMode < 1.5 ) {\n"
 	"    c = texture( u_tex0, v_gen0.st ) * texture( u_tex1, v_gen1.st ) * vc;\n"
 	"  } else {\n"
-	"    vec3 proj = textureProj( u_tex0, vec3(v_gen0.xy, v_gen0.w) ).rgb;\n"
-	"    float fall = u_secondTexgen > 0.5 ? texture( u_tex1, vec2( v_gen1.s, 0.5 ) ).r : 1.0;\n"
-	"    c = vec4( proj * fall * vc.rgb, vc.a );\n"
+	// Fixed-function MODULATE on both units: blend lights keep projected
+	// and falloff alpha as well as their color (RB_BlendLight).
+	"    vec4 proj = textureProj( u_tex0, vec3(v_gen0.xy, v_gen0.w) );\n"
+	"    vec4 fall = u_secondTexgen > 0.5 ? texture( u_tex1, vec2( v_gen1.s, 0.5 ) ) : vec4( 1.0 );\n"
+	"    c = proj * fall * vc;\n"
 	"  }\n"
 	"  c.rgb = gammaCorrect(c.rgb, u_gamma);\n"
 	"  if (!alphaPass(c.a)) { discard; }\n"
@@ -696,7 +1281,7 @@ static const char *GLES_FS_ENV =
 	"void main() {\n"
 	// ARB vertex.color is the current GL color when the color array is off.
 	// A disabled WebGL attribute otherwise defaults to black, hiding glass.
-	"  vec4 color = mix(u_flatColor, v_col, u_useVtx);\n"
+	"  vec4 color = mix(clamp(u_flatColor, 0.0, 1.0), v_col, u_useVtx);\n"
 	"  vec4 sampleColor = texture( u_cube, reflect(-normalize(v_eye), normalize(v_normal)) ) * color;\n"
 	"  vec3 c = sampleColor.rgb;\n"
 	"  c = gammaCorrect(c, u_gamma);\n"
@@ -878,7 +1463,7 @@ static const char *GLES_FS_SKY =
 	"in vec4 v_col;\n"
 	"out vec4 o_col;\n"
 	"void main() {\n"
-	"  vec4 vc = mix( vec4( 1.0 ), v_col, u_useVtx ) * u_flatColor;\n"
+	"  vec4 vc = mix( vec4( 1.0 ), v_col, u_useVtx ) * clamp( u_flatColor, 0.0, 1.0 );\n"
 	"  vec3 c = texture( u_cube, normalize( v_dir ) ).rgb * vc.rgb;\n"
 	"  c = gammaCorrect(c, u_gamma);\n"
 	"  if (!alphaPass(vc.a)) { discard; }\n"
@@ -904,20 +1489,8 @@ static void GLES_BuildInteraction( void ) {
 	}
 	glesProg_t *p = &g_progInteraction;
 	GLES_FetchCommon( p );
-	p->lOrigin = glGetUniformLocation( p->prog, "u_lOrigin" );
-	p->vOrigin = glGetUniformLocation( p->prog, "u_vOrigin" );
-	p->projS = glGetUniformLocation( p->prog, "u_projS" );
-	p->projT = glGetUniformLocation( p->prog, "u_projT" );
-	p->projQ = glGetUniformLocation( p->prog, "u_projQ" );
-	p->fallS = glGetUniformLocation( p->prog, "u_fallS" );
-	p->bumpS = glGetUniformLocation( p->prog, "u_bumpS" );
-	p->bumpT = glGetUniformLocation( p->prog, "u_bumpT" );
-	p->diffS = glGetUniformLocation( p->prog, "u_diffS" );
-	p->diffT = glGetUniformLocation( p->prog, "u_diffT" );
-	p->specS = glGetUniformLocation( p->prog, "u_specS" );
-	p->specT = glGetUniformLocation( p->prog, "u_specT" );
-	p->colMod = glGetUniformLocation( p->prog, "u_colorMod" );
-	p->colAdd = glGetUniformLocation( p->prog, "u_colorAdd" );
+	p->lOrigin = p->vOrigin = -1;
+	p->interEnv = glGetUniformLocation( p->prog, "u_ienv" );
 	p->diffCol = glGetUniformLocation( p->prog, "u_diffCol" );
 	p->specCol = glGetUniformLocation( p->prog, "u_specCol" );
 	const char *names[7] = { "u_cube", "u_bump", "u_fall", "u_proj", "u_diff", "u_spec", "u_spectab" };
@@ -1222,6 +1795,21 @@ static void GLES_UploadAlphaTest( glesProg_t *p ) {
 	}
 }
 
+// Interaction vertex environment (program.env[4..17]). Per-surface setup
+// changes several slots between draws; one array upload before the draw
+// replaces a call per slot. r_webDeferInteractionEnv 0 uploads on every
+// change instead (same values, more calls) for A/B timing.
+static idCVar r_webDeferInteractionEnv("r_webDeferInteractionEnv", "1", CVAR_RENDERER | CVAR_BOOL,
+	"upload the interaction vertex environment once per draw instead of per parameter");
+static bool g_interactionEnvDirty = true;
+
+static void GLES_FlushInteractionEnv( void ) {
+	if ( g_interactionEnvDirty && g_curProg == &g_progInteraction && g_progInteraction.interEnv >= 0 ) {
+		GLES_Uniform4fv( g_progInteraction.interEnv, 14, g_glesEnvVertex[4] );
+		g_interactionEnvDirty = false;
+	}
+}
+
 static void GLES_UploadProgramUniforms( glesProg_t *p ) {
 	if (g_webPerf.remaining) ++g_webPerf.uniformUploads;
 	// Gamma comes from the cached fragment env slot 21 (RB_SetProgramEnvironment
@@ -1239,20 +1827,8 @@ static void GLES_UploadProgramUniforms( glesProg_t *p ) {
 	}
 	if ( p->inverseVtx >= 0 ) GLES_Uniform1f( p->inverseVtx, g_inverseVtxColor );
 	if ( p == &g_progInteraction && p->prog != 0 ) {
-		if ( p->lOrigin >= 0 ) GLES_Uniform4fv( p->lOrigin, 1, g_glesEnvVertex[4] );
-		if ( p->vOrigin >= 0 ) GLES_Uniform4fv( p->vOrigin, 1, g_glesEnvVertex[5] );
-		if ( p->projS >= 0 ) GLES_Uniform4fv( p->projS, 1, g_glesEnvVertex[6] );
-		if ( p->projT >= 0 ) GLES_Uniform4fv( p->projT, 1, g_glesEnvVertex[7] );
-		if ( p->projQ >= 0 ) GLES_Uniform4fv( p->projQ, 1, g_glesEnvVertex[8] );
-		if ( p->fallS >= 0 ) GLES_Uniform4fv( p->fallS, 1, g_glesEnvVertex[9] );
-		if ( p->bumpS >= 0 ) GLES_Uniform4fv( p->bumpS, 1, g_glesEnvVertex[10] );
-		if ( p->bumpT >= 0 ) GLES_Uniform4fv( p->bumpT, 1, g_glesEnvVertex[11] );
-		if ( p->diffS >= 0 ) GLES_Uniform4fv( p->diffS, 1, g_glesEnvVertex[12] );
-		if ( p->diffT >= 0 ) GLES_Uniform4fv( p->diffT, 1, g_glesEnvVertex[13] );
-		if ( p->specS >= 0 ) GLES_Uniform4fv( p->specS, 1, g_glesEnvVertex[14] );
-		if ( p->specT >= 0 ) GLES_Uniform4fv( p->specT, 1, g_glesEnvVertex[15] );
-		if ( p->colMod >= 0 ) GLES_Uniform4fv( p->colMod, 1, g_glesEnvVertex[16] );
-		if ( p->colAdd >= 0 ) GLES_Uniform4fv( p->colAdd, 1, g_glesEnvVertex[17] );
+		g_interactionEnvDirty = true;
+		GLES_FlushInteractionEnv();
 		if ( p->diffCol >= 0 ) GLES_Uniform4fv( p->diffCol, 1, g_glesEnvFragment[0] );
 		if ( p->specCol >= 0 ) GLES_Uniform4fv( p->specCol, 1, g_glesEnvFragment[1] );
 	} else if ( p == &g_progShadow && p->prog != 0 ) {
@@ -1386,22 +1962,11 @@ static void APIENTRY GLES_ProgramEnvParameter4fvARB( GLenum target, GLuint index
 		GLint loc = -1;
 		if ( g_curProg == &g_progInteraction ) {
 			if ( target == GL_VERTEX_PROGRAM_ARB ) {
-				switch ( index ) {
-				case 4: loc = g_curProg->lOrigin; break;
-				case 5: loc = g_curProg->vOrigin; break;
-				case 6: loc = g_curProg->projS; break;
-				case 7: loc = g_curProg->projT; break;
-				case 8: loc = g_curProg->projQ; break;
-				case 9: loc = g_curProg->fallS; break;
-				case 10: loc = g_curProg->bumpS; break;
-				case 11: loc = g_curProg->bumpT; break;
-				case 12: loc = g_curProg->diffS; break;
-				case 13: loc = g_curProg->diffT; break;
-				case 14: loc = g_curProg->specS; break;
-				case 15: loc = g_curProg->specT; break;
-				case 16: loc = g_curProg->colMod; break;
-				case 17: loc = g_curProg->colAdd; break;
-				default: break;
+				if ( index >= 4 && index <= 17 ) {
+					g_interactionEnvDirty = true;
+					if ( !r_webDeferInteractionEnv.GetBool() ) {
+						GLES_FlushInteractionEnv();
+					}
 				}
 			} else {
 				if ( index == 0 ) loc = g_curProg->diffCol;
@@ -1730,8 +2295,13 @@ static void GLES_SyncProgramForDraw( void ) {
 		}
 	} else if ( ( g_curProg == &g_progFlat || g_curProg == &g_progSky )
 	            && g_progSky.prog != 0 && g_progFlat.prog != 0 ) {
-		bool wantSky = g_unitTarget[0] == (GLenum)GL_TEXTURE_CUBE_MAP && g_unitId[0] != 0
-			&& ( g_unitId[1] == 0 || g_unitTarget[1] == (GLenum)GL_TEXTURE_CUBE_MAP );
+		// Fixed-function texturing samples the target the engine enabled on
+		// each unit. A unit keeps its 2D and cube bindings independently, and
+		// a disabled unit (BindNull) can still hold a stale binding, so the
+		// most recently bound target does not identify the sampled texture.
+		const textureType_t unit0 = backEnd.glState.tmu[0].textureType;
+		const textureType_t unit1 = backEnd.glState.tmu[1].textureType;
+		bool wantSky = unit0 == TT_CUBIC && ( unit1 == TT_DISABLED || unit1 == TT_CUBIC );
 		if ( wantSky && g_curProg != &g_progSky ) {
 			g_curProg = &g_progSky;
 			GLES_UseProgram( g_progSky.prog );
@@ -1748,6 +2318,7 @@ static void GLES_SyncProgramForDraw( void ) {
 }
 
 static void APIENTRY GLES_BindTexture( GLenum target, GLuint texture ) {
+	GLES_SyncActiveTexture();
 	int unit = backEnd.glState.currenttmu;
 	if ( unit >= 0 && unit < GLES_MAX_TEXGEN_UNITS ) {
 		g_unitTarget[unit] = target;
@@ -1759,9 +2330,50 @@ static void APIENTRY GLES_BindTexture( GLenum target, GLuint texture ) {
 static void (APIENTRYP RealDrawElements)( GLenum mode, GLsizei count, GLenum type, const GLvoid *indices ) = NULL;
 static void (APIENTRYP RealDrawArrays)( GLenum mode, GLint first, GLsizei count ) = NULL;
 
+static const char *GLES_ProgramName( const glesProg_t *p ) {
+	if ( p == &g_progInteraction ) return "interaction";
+	if ( p == &g_progShadow ) return "shadow";
+	if ( p == &g_progFlat ) return "flat";
+	if ( p == &g_progEnv ) return "environment";
+	if ( p == &g_progBumpyEnv ) return "bumpyEnvironment";
+	if ( p == &g_progGlass ) return "glass";
+	if ( p == &g_progSoft ) return "softParticle";
+	if ( p == &g_progSky ) return "sky";
+	if ( p == &g_progHeat ) return "heatHaze";
+	if ( p == &g_progColorProcess ) return "colorProcess";
+	return "none";
+}
+
+// webpixel x y: after every draw of the next frame, read one pixel of the
+// default framebuffer and print each draw that changes it, with the program
+// and bound texture names. Diagnostic only (synchronous reads).
+static void GLES_ProbePixel( void ) {
+	if ( g_pixelProbe != 2 ) return;
+	++g_pixelDraw;
+	GLint fb = 0;
+	glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &fb );
+	if ( fb != 0 ) return;
+	byte rgba[4];
+	glReadPixels( g_pixelX, g_pixelY, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, rgba );
+	const bool inRange = g_pixelDraw >= g_pixelFirst && g_pixelDraw <= g_pixelLastDraw;
+	if ( !inRange && !memcmp( rgba, g_pixelLastColor, 4 ) ) return;
+	memcpy( g_pixelLastColor, rgba, 4 );
+	common->Printf( "WEB_PIXEL draw %d -> %d %d %d %d state 0x%llx program %s texgen %d useVtx %g inverse %g color %g %g %g %g colorArray %d tex0 %s tex1 %s tex2 %s tex3 %s tex4 %s\n",
+		g_pixelDraw, rgba[0], rgba[1], rgba[2], rgba[3], (unsigned long long)backEnd.glState.glStateBits,
+		GLES_ProgramName( g_curProg ), GLES_TexgenActive() ? 1 : 0,
+		g_useVtxColor, g_inverseVtxColor, g_flatColor[0], g_flatColor[1], g_flatColor[2], g_flatColor[3],
+		g_attribState[2].enabled ? 1 : 0, GLES_ImageName( g_unitId[0] ), GLES_ImageName( g_unitId[1] ),
+		GLES_ImageName( g_unitId[2] ), GLES_ImageName( g_unitId[3] ), GLES_ImageName( g_unitId[4] ) );
+	if ( g_curProg == &g_progInteraction ) {
+		common->Printf( "WEB_PIXEL   light origin %g %g %g diffuse %g %g %g\n", g_glesEnvVertex[4][0], g_glesEnvVertex[4][1],
+			g_glesEnvVertex[4][2], g_glesEnvFragment[0][0], g_glesEnvFragment[0][1], g_glesEnvFragment[0][2] );
+	}
+}
+
 static void APIENTRY GLES_DrawElements( GLenum mode, GLsizei count, GLenum type, const GLvoid *indices ) {
 	if (g_webPerf.remaining) ++g_webPerf.draws;
 	GLES_SyncProgramForDraw();
+	GLES_FlushInteractionEnv();
 	static int diagnostics = 0;
 	bool diagnose = !r_ignoreGLErrors.GetBool() && diagnostics < 12;
 	if ( diagnose ) {
@@ -1769,32 +2381,41 @@ static void APIENTRY GLES_DrawElements( GLenum mode, GLsizei count, GLenum type,
 		while ( (err = glGetError()) != GL_NO_ERROR ) common->Printf("WebGL: before draw error 0x%x\n", err);
 	}
 	if ( RealDrawElements != NULL ) {
-		if ( g_boundIndexBuffer == 0 && indices != NULL ) {
+		const bool cpuIndices = g_boundIndexBuffer == 0 && indices != NULL;
+		GLES_SyncVertexState( cpuIndices );
+		if ( cpuIndices ) {
 			// Dynamic GUI surfaces do not have an index cache. WebGL forbids
 			// drawing directly from CPU memory, so upload these indices.
+			if (g_webPerf.remaining) ++g_webPerf.cpuIndexDraws;
 			if ( !g_scratchIndexBuffer ) GLES_GenBuffers( 1, &g_scratchIndexBuffer );
 			GLES_BindBuffer( GL_ELEMENT_ARRAY_BUFFER, g_scratchIndexBuffer );
 			int bytes = type == GL_UNSIGNED_INT ? 4 : type == GL_UNSIGNED_SHORT ? 2 : 1;
-			glBufferData( GL_ELEMENT_ARRAY_BUFFER, count * bytes, indices, GL_STREAM_DRAW );
+			GLES_BufferData( GL_ELEMENT_ARRAY_BUFFER, count * bytes, indices, GL_STREAM_DRAW );
 			RealDrawElements( mode, count, type, NULL );
+			GLES_ProbePixel();
 			if ( diagnose ) { common->Printf("WebGL: CPU-index draw error 0x%x (%d indices)\n", glGetError(), count); ++diagnostics; }
 			GLES_BindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
 			return;
 		}
 		RealDrawElements( mode, count, type, indices );
 		if ( diagnose ) { common->Printf("WebGL: VBO-index draw error 0x%x (%d indices)\n", glGetError(), count); ++diagnostics; }
+		GLES_ProbePixel();
 	}
 }
 
 static void APIENTRY GLES_DrawArrays( GLenum mode, GLint first, GLsizei count ) {
 	if (g_webPerf.remaining) ++g_webPerf.draws;
 	GLES_SyncProgramForDraw();
+	GLES_FlushInteractionEnv();
 	if ( RealDrawArrays != NULL ) {
+		GLES_SyncVertexState( false );
 		RealDrawArrays( mode, first, count );
+		GLES_ProbePixel();
 	}
 }
 
 static void APIENTRY GLES_TexParameterf( GLenum target, GLenum pname, GLfloat value ) {
+	GLES_SyncActiveTexture();
 	if ( pname == GL_TEXTURE_BORDER_COLOR ) return;
 	if ( pname == GL_TEXTURE_LOD_BIAS_EXT ) return;
 	if ( (pname == GL_TEXTURE_WRAP_S || pname == GL_TEXTURE_WRAP_T || pname == GL_TEXTURE_WRAP_R)
@@ -1940,6 +2561,7 @@ static void APIENTRY GLES_Frustum( GLdouble left, GLdouble right, GLdouble botto
 // no-ops (glConfig.textureCompressionAvailable=false keeps the engine from
 // requesting them for normal images).
 static void APIENTRY GLES_TexImage2D( GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels ) {
+	GLES_SyncActiveTexture();
 	GLenum internal = (GLenum)internalFormat;
 	GLenum fmt = format;
 	GLenum typ = type;
@@ -2029,6 +2651,7 @@ static void APIENTRY GLES_TexImage2D( GLenum target, GLint level, GLint internal
 
 static void APIENTRY GLES_CopyTexSubImage2D( GLenum target, GLint level, GLint xoffset, GLint yoffset,
                                            GLint x, GLint y, GLsizei width, GLsizei height ) {
+	GLES_SyncActiveTexture();
 	GLint texture = 0;
 	glGetIntegerv( GL_TEXTURE_BINDING_2D, &texture );
 	if ( target != GL_TEXTURE_2D || g_depthTextures.count((GLuint)texture) == 0 ) {
@@ -2047,9 +2670,12 @@ static void APIENTRY GLES_CopyTexSubImage2D( GLenum target, GLint level, GLint x
 	glDrawBuffers(1, &none);
 	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
 	glDisable(GL_SCISSOR_TEST);
+	// Only depth is sampled (_currentDepth). ANGLE's D3D11 backend copies a
+	// combined depth/stencil blit through CPU staging memory; depth alone
+	// takes its GPU path and yields the same depth texels.
 	glBlitFramebuffer( x, y, x + width, y + height,
 	                   xoffset, yoffset, xoffset + width, yoffset + height,
-	                   GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST );
+	                   r_webDepthOnlyCopy.GetBool() ? GL_DEPTH_BUFFER_BIT : GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST );
 	if (scissor) glEnable(GL_SCISSOR_TEST);
 	glBindFramebuffer( GL_READ_FRAMEBUFFER, readFB );
 	glBindFramebuffer( GL_DRAW_FRAMEBUFFER, drawFB );
@@ -2100,7 +2726,21 @@ void R_GLES_LoadFunctions( void ) {
 	g_boundIndexBuffer = g_boundArrayBuffer = 0;
 	memset(g_uniformState, 0, sizeof(g_uniformState));
 	memset(g_attribState, 0, sizeof(g_attribState));
+	memset(g_defaultAttribs, 0, sizeof(g_defaultAttribs));
+	g_defaultElement = g_actualArrayBuffer = g_currentVao = 0;
+	++g_vertexStateSerial;
+	g_vertexSyncVao = ~0u;
+	g_vaoCache.clear();	// names belong to the previous context
+	g_bufferInfo.clear();
 	g_boundProgram = 0;
+	g_activeTexture = g_wantedActiveTexture = GL_TEXTURE0;
+	g_interactionEnvDirty = true;
+	// Query names belong to the previous context.
+	g_webGpu.pending.Clear();
+	g_webGpu.pool.Clear();
+	g_webGpu.active = g_webGpu.remaining = 0;
+	g_webGpu.pass = -1;
+	GLES_ResetStencilState();
 	g_depthCopyFramebuffer = 0;
 	g_depthTextures.clear();
 	memset( g_genEn, 0, sizeof(g_genEn) );
@@ -2126,6 +2766,9 @@ void R_GLES_LoadFunctions( void ) {
 	g_lastVid = g_lastFid = -1;
 	g_inInteraction = 0;
 	cmdSystem->AddCommand("webglinfo", GLES_Info_f, CMD_FL_RENDERER, "prints browser GL viewport and framebuffer state");
+	cmdSystem->AddCommand("webgpu", GLES_Gpu_f, CMD_FL_RENDERER, "GPU time per render pass from timer queries (optional 10..600 frames)");
+	cmdSystem->AddCommand("webpixel", GLES_Pixel_f, CMD_FL_RENDERER, "trace which draws change one framebuffer pixel in the next frame");
+	cmdSystem->AddCommand("websurfaces", GLES_Surfaces_f, CMD_FL_RENDERER, "list the next view's draw surfaces overlapping an optional x1 y1 x2 y2 region");
 	cmdSystem->AddCommand("webperf", GLES_Perf_f, CMD_FL_RENDERER, "sample browser frame timing and rendering calls (optional 30..600 frames)");
 #define QGLPROC( name, rettype, args ) \
 	q##name = ( rettype( APIENTRYP ) args )GLimp_ExtensionPointer( #name ); \
@@ -2174,6 +2817,15 @@ void R_GLES_LoadFunctions( void ) {
 	qglPolygonMode = GLES_NopTyped;
 	qglDrawBuffer = GLES_NopTyped;
 	qglBindTexture = GLES_BindTexture;
+	// Everything that depends on the selected texture unit first sends a
+	// deferred GLES_ActiveTexture selection.
+	qglTexParameteri = GLES_TexParameteri;
+	qglTexSubImage2D = GLES_TexSubImage2D;
+	qglTexImage3D = GLES_TexImage3D;
+	qglCopyTexImage2D = GLES_CopyTexImage2D;
+	qglGetIntegerv = GLES_GetIntegerv;
+	qglGetFloatv = GLES_GetFloatv;
+	qglGetBooleanv = GLES_GetBooleanv;
 	// qglTexGenf modes are ignored (planes carry the data); keep the loader
 	// result (real function if it exists, no-op otherwise).
 	RealDrawElements = qglDrawElements;
@@ -2183,16 +2835,15 @@ void R_GLES_LoadFunctions( void ) {
 
 	// Core GLES3 equivalents for the multitexture / VBO / stencil entry
 	// points the engine actually uses (resolved by core name, not ARB name).
-	qglActiveTextureARB = (void (APIENTRYP)( GLenum ))GLimp_ExtensionPointer( "glActiveTexture" );
-	if ( !qglActiveTextureARB ) {
-		qglActiveTextureARB = GLES_NopTyped;
-	}
+	qglActiveTextureARB = GLES_ActiveTexture;
+	qglStencilOp = GLES_StencilOp;
+	qglStencilFunc = GLES_StencilFunc;
 	qglBindBufferARB = GLES_BindBuffer;
 	qglDeleteBuffersARB = GLES_DeleteBuffers;
 	qglGenBuffersARB = GLES_GenBuffers;
 	qglIsBufferARB = (PFNGLISBUFFERARBPROC)GLimp_ExtensionPointer( "glIsBuffer" );
-	qglBufferDataARB = (PFNGLBUFFERDATAARBPROC)GLimp_ExtensionPointer( "glBufferData" );
-	qglBufferSubDataARB = (PFNGLBUFFERSUBDATAARBPROC)GLimp_ExtensionPointer( "glBufferSubData" );
+	qglBufferDataARB = GLES_BufferData;
+	qglBufferSubDataARB = GLES_BufferSubData;
 	qglGetBufferParameterivARB = (PFNGLGETBUFFERPARAMETERIVARBPROC)GLimp_ExtensionPointer( "glGetBufferParameteriv" );
 	qglGetBufferPointervARB = (PFNGLGETBUFFERPOINTERVARBPROC)GLimp_ExtensionPointer( "glGetBufferPointerv" );
 	if ( !qglBindBufferARB ) qglBindBufferARB = GLES_NopTyped;
@@ -2209,10 +2860,7 @@ void R_GLES_LoadFunctions( void ) {
 	qglUnmapBufferARB = GLES_NopTyped;
 
 	// Stencil-separate is core in WebGL2; two-sided ATI ext does not exist.
-	qglStencilOpSeparate = (PFNGLSTENCILOPSEPARATEPROC)GLimp_ExtensionPointer( "glStencilOpSeparate" );
-	if ( !qglStencilOpSeparate ) {
-		qglStencilOpSeparate = GLES_NopTyped;
-	}
+	qglStencilOpSeparate = GLES_StencilOpSeparate;
 	qglActiveStencilFaceEXT = GLES_NopTyped;
 	qglDepthBoundsEXT = GLES_NopTyped;
 	qglDebugMessageCallbackARB = GLES_NopTyped;
@@ -2225,10 +2873,7 @@ void R_GLES_LoadFunctions( void ) {
 
 	// Compressed uploads resolve to core functions when the S3TC extension
 	// is present (see R_GLES_InitConfig); readback has no GLES equivalent.
-	qglCompressedTexImage2DARB = (PFNGLCOMPRESSEDTEXIMAGE2DARBPROC)GLimp_ExtensionPointer( "glCompressedTexImage2D" );
-	if ( !qglCompressedTexImage2DARB ) {
-		qglCompressedTexImage2DARB = GLES_NopTyped;
-	}
+	qglCompressedTexImage2DARB = GLES_CompressedTexImage2D;
 	qglGetCompressedTexImageARB = GLES_NopTyped;
 
 	// ARB program emulation (real GLSL programs, selected by id pair).
@@ -2294,6 +2939,7 @@ void R_GLES_InitConfig( void ) {
 #ifdef __EMSCRIPTEN__
 	EMSCRIPTEN_WEBGL_CONTEXT_HANDLE webglCtx = emscripten_webgl_get_current_context();
 	GLES_InitAnisotropy( webglCtx );
+	g_webGpu.available = webglCtx > 0 && emscripten_webgl_enable_extension( webglCtx, "EXT_disjoint_timer_query_webgl2" );
 	if ( webglCtx > 0 ) {
 		emscripten_webgl_enable_extension( webglCtx, "WEBGL_compressed_texture_s3tc" );
 	}

@@ -51,6 +51,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/tr_local.h"
 extern "C" void R_GLES_PerfFrame( double cpuMs );
 extern "C" void R_GLES_PerfCallback( bool rendered );
+void R_GLES_GpuFrame( void );
 #endif
 
 
@@ -438,6 +439,24 @@ main
 // Emscripten forbids a blocking while(1) loop; run one frame per browser tick.
 idCVar r_webFrameLimit("r_webFrameLimit", "60", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
 	"browser render limit: 30, 60, or 0 for unlocked (display refresh rate)", 0, 60);
+// Browser fullscreen. Browsers allow it only shortly after a click or key
+// press, so the page makes the request and reports the actual state back
+// (Web_SetFullscreenState); the cvar is never archived.
+idCVar r_webFullscreen("r_webFullscreen", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT,
+	"show the game fullscreen in the browser (needs a recent click or key press)");
+extern "C" EMSCRIPTEN_KEEPALIVE void Web_SetFullscreenState(int fullscreen) {
+	if (!common->IsInitialized()) return;
+	r_webFullscreen.SetBool(fullscreen != 0);
+	r_webFullscreen.ClearModified();
+}
+
+// Render resolution relative to the display's pixels. Fill cost dominates
+// heavy scenes on integrated GPUs, especially fullscreen; the page scales
+// the pixel ratio SDL uses for the drawing buffer and the browser upscales.
+idCVar r_webRenderScale("r_webRenderScale", "1", CVAR_SYSTEM | CVAR_FLOAT | CVAR_ARCHIVE,
+	"browser render resolution relative to the display: 1, 0.75 or 0.5", 0.5f, 1.0f);
+static bool Web_ValidRenderScale(double scale);
+
 extern "C" EMSCRIPTEN_KEEPALIVE void Web_QueueCommand(const char *command) {
 	if (command && common->IsInitialized()) {
 		cmdSystem->BufferCommandText(CMD_EXEC_APPEND, va("%s\n", command));
@@ -459,8 +478,44 @@ static const webGraphicsOption_t webGraphicsOptions[] = {
 	{ "r_gamma", 0.5, 3, false },
 	{ "r_brightness", 0.5, 2, false },
 	{ "r_webFrameLimit", 0, 60, false },
-	{ "image_anisotropy", 1, 16, false }
+	{ "image_anisotropy", 1, 16, false },
+	{ "com_showFPS", 0, 1, true },
+	{ "r_webRenderScale", 0.5, 1, false }
 };
+static const int WEB_GRAPHICS_OPTION_COUNT = sizeof( webGraphicsOptions ) / sizeof( webGraphicsOptions[0] );
+static bool Web_ValidRenderScale(double scale) {
+	return scale == 1.0 || scale == 0.75 || scale == 0.5;
+}
+static webFramePacing_t webPacing;
+
+// Display refresh measured from animation callbacks (Hz; 0 until known).
+extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetDisplayRefresh() {
+	return webPacing.period > 0 ? 1000.0 / webPacing.period : 0;
+}
+
+// Rendered-frame start times, for the frame rate the player actually gets.
+static double webRenderedTimes[64];
+static int webRenderedCount = 0, webRenderedNext = 0;
+
+// Frames per second rendered over the last second (0 when nothing rendered).
+extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetRenderedFrameRate() {
+	const double now = emscripten_get_now();
+	double first = 0, last = 0;
+	int frames = 0;
+	for (int i = 0; i < webRenderedCount; ++i) {
+		const double t = webRenderedTimes[i];
+		if (now - t > 1000) continue;
+		if (!frames || t < first) first = t;
+		if (!frames || t > last) last = t;
+		++frames;
+	}
+	return frames > 1 && last > first ? (frames - 1) * 1000.0 / (last - first) : 0;
+}
+
+// Refreshes per frame when a cap locks to this display, or 0 (uneven/unknown).
+extern "C" EMSCRIPTEN_KEEPALIVE int Web_GetLockedRefreshes(int limit) {
+	return Web_ValidFrameLimit(limit) ? webPacing.LockedRefreshes(limit) : 0;
+}
 
 extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetTextureFilteringLimit() {
 	if (!common->IsInitialized() || !glConfig.isInitialized || !glConfig.anisotropicAvailable) return 1;
@@ -468,14 +523,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetTextureFilteringLimit() {
 }
 
 extern "C" EMSCRIPTEN_KEEPALIVE double Web_GetGraphicsOption(int index) {
-	if (!common->IsInitialized() || index < 0 || index >= 8) return -1;
+	if (!common->IsInitialized() || index < 0 || index >= WEB_GRAPHICS_OPTION_COUNT) return -1;
 	return cvarSystem->GetCVarFloat(webGraphicsOptions[index].name);
 }
 
 // Keep validation at the JS boundary strict even with finite-math-only in
 // engine compilation flags. This runs only when the user applies options.
 extern "C" EMSCRIPTEN_KEEPALIVE __attribute__((optnone)) int Web_SetGraphicsOption(int index, double value) {
-	if (!common->IsInitialized() || index < 0 || index >= 8) return 0;
+	if (!common->IsInitialized() || index < 0 || index >= WEB_GRAPHICS_OPTION_COUNT) return 0;
 	// Inspect IEEE bits because the engine is built with finite-math-only.
 	uint64_t bits;
 	memcpy(&bits, &value, sizeof(bits));
@@ -484,6 +539,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE __attribute__((optnone)) int Web_SetGraphicsOpti
 	if (value < option.minimum || value > option.maximum) return 0;
 	if (option.boolean && value != 0 && value != 1) return 0;
 	if (index == 6 && value != 0 && value != 30 && value != 60) return 0;
+	if (index == 9 && !Web_ValidRenderScale(value)) return 0;
 	if (index == 7 && value > Web_GetTextureFilteringLimit()) return 0;
 	cvarSystem->SetCVarFloat(option.name, value);
 	return 1;
@@ -514,17 +570,34 @@ static void Web_AudioInfo_f( const idCmdArgs & ) {
 }
 
 static void WebMainLoop() {
-	static webFramePacing_t pacing;
 	double frameStart = emscripten_get_now();
+	if (r_webFullscreen.IsModified()) {
+		// Set by the menu, Alt+Enter or the console during the last frame.
+		r_webFullscreen.ClearModified();
+		EM_ASM({ if (Module['setFullscreen']) Module['setFullscreen'](!!$0); }, r_webFullscreen.GetBool() ? 1 : 0);
+	}
+	if (r_webRenderScale.IsModified()) {
+		// Archived configs and the console can hold other values; use Full.
+		r_webRenderScale.ClearModified();
+		if (!Web_ValidRenderScale(r_webRenderScale.GetFloat())) {
+			r_webRenderScale.SetFloat(1.0f);
+			r_webRenderScale.ClearModified();
+		}
+		EM_ASM({ if (Module['setRenderScale']) Module['setRenderScale']($0); }, r_webRenderScale.GetFloat());
+	}
 	int limit = r_webFrameLimit.GetInteger();
 	if (!Web_ValidFrameLimit(limit)) {
 		limit = 60;
 		r_webFrameLimit.SetInteger(limit);
 	}
-	bool rendered = pacing.ShouldRender(frameStart, limit);
+	bool rendered = webPacing.ShouldRender(frameStart, limit);
 	R_GLES_PerfCallback(rendered);
 	if (!rendered) return;
+	webRenderedTimes[webRenderedNext] = frameStart;
+	webRenderedNext = (webRenderedNext + 1) % 64;
+	if (webRenderedCount < 64) ++webRenderedCount;
 	common->Frame();
+	R_GLES_GpuFrame();
 	R_GLES_PerfFrame(emscripten_get_now() - frameStart);
 }
 #endif
