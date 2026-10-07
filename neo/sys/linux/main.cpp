@@ -437,7 +437,7 @@ main
 */
 #ifdef __EMSCRIPTEN__
 // Emscripten forbids a blocking while(1) loop; run one frame per browser tick.
-idCVar r_webFrameLimit("r_webFrameLimit", "60", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
+idCVar r_webFrameLimit("r_webFrameLimit", "30", CVAR_SYSTEM | CVAR_INTEGER | CVAR_ARCHIVE,
 	"browser render limit: 30, 60, or 0 for unlocked (display refresh rate)", 0, 60);
 // Browser fullscreen. Browsers allow it only shortly after a click or key
 // press, so the page makes the request and reports the actual state back
@@ -587,7 +587,7 @@ static void WebMainLoop() {
 	}
 	int limit = r_webFrameLimit.GetInteger();
 	if (!Web_ValidFrameLimit(limit)) {
-		limit = 60;
+		limit = 30;
 		r_webFrameLimit.SetInteger(limit);
 	}
 	bool rendered = webPacing.ShouldRender(frameStart, limit);

@@ -237,7 +237,7 @@ context.applyGraphics(false);
 assert.equal(graphicsWrites.length, 0, 'invalid frame rates cannot partially apply graphics');
 assert.equal(context.focusedElement, 'graphics-fps');
 context.applyGraphics(true);
-assert.deepEqual(graphicsValues, [1, 0, 0, 1, 1, 1, 60, 8, 0, 1], 'restore only graphics defaults with 60 FPS, 8x filtering, no counter and full resolution');
+assert.deepEqual(graphicsValues, [1, 0, 0, 1, 1, 1, 30, 8, 0, 1], 'restore only graphics defaults with 30 FPS, 8x filtering, no counter and full resolution');
 // Render resolution: validated before any write, then applied to the pixel
 // ratio SDL reads when it sizes the drawing buffer.
 graphicsWrites = [];

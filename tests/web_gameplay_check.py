@@ -182,6 +182,8 @@ int main(){
  for(int f=0;f<600;++f){double v=1000+f*1000.0/60;if(f%7==3)v+=12;if(f%23==11)continue;busy.ShouldRender(v,60);}
  check(std::abs(1000.0/busy.period-60)<0.3,"busy main thread does not bias the refresh estimate");
  check(!Web_ValidFrameLimit(45)&&Web_ValidFrameLimit(0)&&Web_ValidFrameLimit(30)&&Web_ValidFrameLimit(60),"only supported caps accepted");
+ webFramePacing_t invalidCapPacing;
+ check(invalidCapPacing.ShouldRender(0,45)&&!invalidCapPacing.ShouldRender(16.7,45)&&invalidCapPacing.ShouldRender(33.3,45),"invalid cap falls back to 30 FPS");
  check(USERCMD_MSEC==16,"native integer tick interval retained");
  for(int fps: {30,60,90,144}){
   lastTicMsec=0;ticks=0;

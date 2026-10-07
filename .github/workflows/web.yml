@@ -44,6 +44,9 @@ on:
       - 'tests/shadow_facing_check.py'
       - 'tests/web_perf_check.py'
       - 'tests/light_triangle_check.py'
+      - 'tests/save_projectile_parity.cfg'
+      - 'tests/save_projectile_parity_check.py'
+      - 'tests/test_save_projectile_parity.py'
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
       - 'tests/render_scenes_parity.cfg'
@@ -106,6 +109,9 @@ on:
       - 'tests/shadow_facing_check.py'
       - 'tests/web_perf_check.py'
       - 'tests/light_triangle_check.py'
+      - 'tests/save_projectile_parity.cfg'
+      - 'tests/save_projectile_parity_check.py'
+      - 'tests/test_save_projectile_parity.py'
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
       - 'tests/render_scenes_parity.cfg'
@@ -229,6 +235,7 @@ jobs:
           python3 tests/render_shader_check.py build-web/render-check.html
           python3 tests/test_gameplay_parity.py
           python3 tests/test_projectile_parity.py
+          python3 tests/test_save_projectile_parity.py
           python3 tests/test_rigid_body_trace.py
           python3 tests/test_render_state_parity.py
           python3 tests/web_angle_check.py build-web/web-angle-check.cpp

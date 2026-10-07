@@ -73,7 +73,7 @@ struct webFramePacing_t {
 	}
 
 	bool ShouldRender(double now, int limit) {
-		if (!Web_ValidFrameLimit(limit)) limit = 60;
+		if (!Web_ValidFrameLimit(limit)) limit = 30;
 		ObserveCallback(now);
 		if (limit != previousLimit) {
 			previousLimit = limit;

@@ -262,7 +262,8 @@ engine writes. The setup stacks into a single column at narrow widths.
 
 Graphics options exposes the same three Frame rate choices through Apply
 graphics, plus a Frame rate counter (`com_showFPS`). The archived
-`r_webFrameLimit` setting uses `30`, `60`, or `0` (Unlocked). A deadline gate
+`r_webFrameLimit` setting uses `30`, `60`, or `0` (Unlocked), with 30 FPS as
+the default for new configurations. A deadline gate
 on browser animation callbacks limits rendered frames independently of the
 fixed game ticks. When the cap divides the display refresh, the cap is locked
 to whole refreshes (see **Locked 30 and 60 FPS** below). Late callbacks skip
@@ -688,7 +689,7 @@ original cvar binding, so unfamiliar mod controls keep their own behavior.
   EAX shows `Off`. The legacy audio
   backend control, when present, shows `WebAudio`. These display-only controls
   do not accept input or overwrite engine values during Apply.
-- **Advanced:** Frame rate offers **30 FPS**, **60 FPS** (default), and
+- **Advanced:** Frame rate offers **30 FPS** (default), **60 FPS**, and
   **Unlocked**, updating immediately without a restart. Unlocked follows the
   browser/display refresh rate. The unsupported multisampling
   row becomes **Soft particles**, with a live On/Off toggle. Shadows, normal
@@ -2237,9 +2238,90 @@ checks. These counts identify how much of a live workload uses this optimization
 Both the Windows RelWithDebInfo and final web engine builds pass. Build evidence
 is ignored `build-windows/light-triangles-final-build.log` and
 `build-web/light-triangles-final-build.log`. The final web build retains the
-existing `BTree.h` unused-variable warning. Fresh browser image comparisons and
-live before/after FPS measurements for this fused-bounds change remain pending;
-the earlier model-profiling image checks do not validate this later change.
+existing `BTree.h` unused-variable warning. Fresh 640x480 rails, stairs and
+saved-rail images are pixel-identical to `model-timing-fresh`, with maximum
+channel change zero. All three recorded game/render clock, frame and seed
+checkpoints match the native fixture. Native RGB mean errors remain
+0.100183/0.185637/0.250479. Evidence is ignored
+`build-web/render-hangar/light-triangles/`.
+
+At the preserved player camera (168.64/-1354.34/196.25, yaw 178.2), two
+600-frame samples with the 60 FPS cap average 30.6 and 29.9 FPS. CPU means are
+31.01 and 31.67 ms; p95 values are 44.09 and 45.47 ms. The earlier sample
+averaged 30.3 FPS with CPU mean 31.76 ms and p95 52.12 ms. Actors and workload
+vary between these samples, so they do not establish a speedup. The fused path
+is used by only about 0.4 of 22.1–22.7 light-triangle builds per frame here;
+this limits its contribution to this scene. Evidence is ignored
+`build-web/light-triangles-{before,after}-console.txt`.
+
+### 30 FPS default and gameplay stability focus (2026-10-06)
+
+The user selected 30 FPS as the default and shifted performance work toward
+30 FPS and Unlocked, then gameplay accuracy and stability against the original
+Steam release. Existing archived frame limits remain respected. Both engine
+fallbacks and the launcher's Restore graphics defaults now use 30; 60 FPS and
+Unlocked remain available. No game tick, movement speed or weapon script changed.
+The compiled timing/input/graphics harness includes invalid-cap fallback and
+retains fixed-tick checks across all supported caps and display refresh rates.
+
+Mode samples require Apply graphics and an engine readback of `r_webFrameLimit`.
+Two earlier samples labeled `MODE_30_ACCURACY_BEGIN` and
+`MODE_UNLOCKED_ACCURACY_BEGIN` changed only the dropdown and retained the 60 FPS
+cap. They are not evidence of 30 FPS or Unlocked performance. The correctly
+applied modes report 27.6 FPS at 30 (CPU mean 31.15 ms, p95 46.57 ms, 182 cap
+skips) and 23.8 FPS Unlocked (39.73/85.98 ms, zero cap skips). These are variable
+live workloads; the unlocked run overlaps native audit work and is not a fair
+speed comparison. Stable 30 FPS during movement/combat remains unverified.
+Evidence is ignored `build-web/30-unlocked-applied-console.txt`.
+
+The installed original Steam `Doom3.exe` is present, but its Windows file-version
+metadata (`1, 0, 0, 1`) is not sufficient evidence of the running game version.
+`version.inf` reports ExtVersion 1.3 and IntVersion 30.1. Existing Windows/web
+parity fixtures use this project's modified native engine and licensed Steam
+archives. They establish port consistency, not equivalence to the original
+Steam executable. The remaining accuracy work needs direct stock-executable
+baselines for timing, input, combat, campaigns and save lifecycle behavior.
+
+The final default-30 web build passes (`build-web/default-30-build.log`), as do
+109 compiled timing/input/graphics checks and all launcher checks. The new
+`tests/save_projectile_parity.cfg` saves a moving grenade in an isolated test
+slot, then compares uninterrupted and restored simulation at three intervals.
+`tests/save_projectile_parity_check.py` validates player, projectile and clock
+state; its ten regression tests are included in asset-free web CI. Existing
+gameplay, projectile and renderer-state parser suites also pass.
+
+Actual browser runs match all 12 project-native checkpoints at both 30 FPS and
+Unlocked, and the two browser runs match each other. The saved grenade is
+visible and moving, consumes one grenade, continues its trajectory, causes
+knockback and reduces health to 63, then disappears while the player recovers
+ground contact. Save/load reproduces these physical states, weapon readiness,
+ammo and game clocks. These controlled fixed-tick replays do not establish
+normal physical-input cadence under browser animation callbacks. Evidence is
+ignored in `build-windows/save-projectile-flight-native/`,
+`build-web/save-projectile-30-console.txt` and
+`build-web/save-projectile-unlocked-console.txt`.
+
+Random seeds match exactly between native and browser at corresponding
+checkpoints, but restoring the native save changes its seed from 750942708 to
+710095416, equivalent to 172 advances of the engine's random generator. The
+engine restores the seed before restoring objects; the individual consumers
+have not been traced. The verifier reports this distinction, and its optional
+`--require-seed-continuity` check currently fails. Stock Steam save behavior,
+broader campaign/combat coverage, normal input cadence, embedded mouse capture
+and sustained 30 FPS during movement remain open.
+
+At the user's requested stopping point, their preserved
+`CodexLightResume_20261006140956109` save is restored at eye
+168.64/-1354.34/196.25, yaw 178.2, with 100 health. Readbacks confirm normal game
+timing, HUD and view effects, shadows, 8x filtering, running WebAudio with 13
+playing sources, and `r_webFrameLimit` value/default 30. The console is hidden
+and the graphics panel shows 30 FPS. Restoration evidence is ignored
+`build-web/default-30-restored-console.txt`; the full-page proof is
+`C:/Users/allen/.codex/visualizations/2026/10/06/doom3-accuracy/default-30-save-restored.jpg`.
+Its displayed 27 FPS is an instant reading, not sustained performance. This
+batch was later merged on top of the rendering, pacing and fullscreen work
+described below, which keeps 30 FPS as the default; the broader accuracy
+objective remains unfinished.
 
 ### GPU depth copy, submission audit and repeatable bench (2026-10-06)
 
