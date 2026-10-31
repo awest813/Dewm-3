@@ -18,11 +18,14 @@ static const webMenuChoice_t webMenuChoices[] = {
 	{ "OS2Primary", "r_mode", "OS2Title", "Render resolution", "Full;75%;50%", "r_webRenderScale", false, "1;0.75;0.5" },
 	{ "OS3Primary", "r_fullscreen", "OS3Title", "Display mode", "Windowed;Fullscreen", "r_webFullscreen", false, "0;1" },
 	{ "OS6Primary", "s_numberOfSpeakers", "OS6Title", "Speakers", "Stereo", NULL, true, NULL },
-	{ "EAXPrimary", "s_useEAXReverb", "EAXTitle", "EAX N/A", "Off", NULL, true, NULL },
+	{ "EAXPrimary", "s_useEAXReverb", "EAXTitle", "Reverb", "On;Off", "s_useEAXReverb", false, "1;0" },
 	{ "SNDBPrimary", "s_driver", "SNDBTitle", "Audio backend", "WebAudio", NULL, true, NULL },
 	{ "ADV5Primary", "r_swapInterval", "ADV5Title", "Frame rate", "30 FPS;60 FPS;Unlocked", "r_webFrameLimit", false, "30;60;0" },
 	{ "ADV7Primary", "r_multisamples", "ADV7Title", "Soft particles", "On;Off", "r_useSoftParticles", false, "1;0" }
 };
+
+// The reverb row when the browser has no EFX (no AudioWorklet; web/openal_efx.js).
+static const webMenuChoice_t webMenuEaxUnavailable = { "EAXPrimary", "s_useEAXReverb", "EAXTitle", "EAX N/A", "Off", NULL, true, NULL };
 
 static inline bool Web_IsStockMenu(const char *source) {
 	return source && (!idStr::Icmp(source, "guis/mainmenu.gui") ||

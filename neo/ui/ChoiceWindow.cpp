@@ -35,6 +35,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "ui/ChoiceWindow.h"
 #ifdef __EMSCRIPTEN__
+#include "sound/sound.h"
 #include "ui/WebMenuPolicy.h"
 #endif
 
@@ -414,6 +415,9 @@ void idChoiceWindow::PostParse() {
 
 #ifdef __EMSCRIPTEN__
 	const webMenuChoice_t *webOption = Web_MenuChoice(gui->GetSourceFile(), name.c_str(), cvarStr.c_str());
+	if (webOption && !idStr::Icmp(webOption->originalCvar, "s_useEAXReverb") && soundSystem->IsEFXAvailable() != 1) {
+		webOption = &webMenuEaxUnavailable;
+	}
 	if (webOption) {
 		webReadOnly = webOption->readOnly;
 		choicesStr.Set(webOption->choices);

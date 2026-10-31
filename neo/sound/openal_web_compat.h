@@ -1,5 +1,5 @@
-// Declaration compatibility for Emscripten's minimal OpenAL headers.
-// EFX is still detected at runtime; these tokens do not enable reverb.
+// Declaration compatibility for Emscripten's minimal OpenAL headers, and the
+// web build's EFX entry points (snd_efx_web.cpp, web/openal_efx.js).
 #ifndef DHEWM3_OPENAL_WEB_COMPAT_H
 #define DHEWM3_OPENAL_WEB_COMPAT_H
 
@@ -114,6 +114,9 @@
 #endif
 #ifndef AL_EFFECT_EAXREVERB
 #define AL_EFFECT_EAXREVERB 0x8000
+#endif
+#ifndef AL_EFFECT_NULL
+#define AL_EFFECT_NULL 0x0000
 #endif
 #ifndef AL_EFFECT_TYPE
 #define AL_EFFECT_TYPE 0x8001
@@ -280,4 +283,10 @@ typedef void (AL_APIENTRY *LPALAUXILIARYEFFECTSLOTI)(ALuint, ALenum, ALint);
 typedef void (AL_APIENTRY *LPALAUXILIARYEFFECTSLOTF)(ALuint, ALenum, ALfloat);
 // The SDK declares HRTF tokens but omits this extension function type.
 typedef ALCboolean (ALC_APIENTRY *LPALCRESETDEVICESOFT)(ALCdevice *, const ALCint *);
+
+// Emscripten's alGetProcAddress knows no EFX functions and its alSourcei and
+// alSource3i reject AL_DIRECT_FILTER and AL_AUXILIARY_SEND_FILTER.
+void *WebEfx_GetProcAddress( const ALchar *name );
+void WebEfx_Sourcei( ALuint source, ALenum param, ALint value );
+void WebEfx_Source3i( ALuint source, ALenum param, ALint value1, ALint value2, ALint value3 );
 #endif
