@@ -232,7 +232,11 @@ void idSoundChannel::ALStop( void ) {
 		alSourcei( openalSource, AL_BUFFER, 0 );
 		// unassociate effect slot from source, so the effect slot can be deleted on shutdown
 		// even though the source itself is deleted later (in idSoundSystemLocal::Shutdown())
+#ifdef __EMSCRIPTEN__
+		WebEfx_Source3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
+#else
 		alSource3i( openalSource, AL_AUXILIARY_SEND_FILTER, AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL );
+#endif
 		soundSystemLocal.FreeOpenALSource( openalSource );
 	}
 

@@ -301,6 +301,11 @@ if(EMSCRIPTEN)
 		-sMAXIMUM_MEMORY=2GB
 		-sSTACK_SIZE=8MB
 		--shell-file=${CMAKE_SOURCE_DIR}/../web/shell.html
+		# OpenAL Soft stereo panning instead of WebAudio PannerNode (docs/WEB.md).
+		--post-js=${CMAKE_SOURCE_DIR}/../web/openal_stereo.js
+		# OpenAL EFX: OpenAL Soft's EAX reverb as an AudioWorklet (docs/WEB.md).
+		--post-js=${CMAKE_SOURCE_DIR}/../web/openal_reverb.js
+		--post-js=${CMAKE_SOURCE_DIR}/../web/openal_efx.js
 	)
 	# Optional: bake game data into the .data bundle at build time.
 	#   emcmake cmake -S neo --preset web-wasm -B build-web -DWEB_PRELOAD_DIR=/path/to/doom3
@@ -884,6 +889,7 @@ set(src_snd
 	sound/snd_cache.cpp
 	sound/snd_decoder.cpp
 	sound/snd_efxfile.cpp
+	sound/snd_efx_web.cpp
 	sound/snd_emitter.cpp
 	sound/snd_shader.cpp
 	sound/snd_system.cpp
@@ -1427,7 +1433,10 @@ if(CORE)
 	endif()
 	if(EMSCRIPTEN)
 		set_property(TARGET ${DHEWM3BINARY} APPEND PROPERTY LINK_DEPENDS
-			"${CMAKE_SOURCE_DIR}/../web/shell.html")
+			"${CMAKE_SOURCE_DIR}/../web/shell.html"
+			"${CMAKE_SOURCE_DIR}/../web/openal_stereo.js"
+			"${CMAKE_SOURCE_DIR}/../web/openal_reverb.js"
+			"${CMAKE_SOURCE_DIR}/../web/openal_efx.js")
 	endif()
 
 	source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} PREFIX neo FILES ${src_core} ${src_sys_base} ${src_sys_core} ${src_imgui} ${src_editor_tools})

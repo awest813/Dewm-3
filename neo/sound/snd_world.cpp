@@ -675,6 +675,15 @@ void idSoundWorldLocal::MixLoop( int current44kHz, int numSpeakers, float *final
 			s = "default";
 			found = soundSystemLocal.EFXDatabase.FindEffect(s, &effect);
 		}
+#ifdef __EMSCRIPTEN__
+		// On the web s_useEAXReverb switches the reverb off and on live: the
+		// slot loses its effect, which also stops the sources' sends.
+		if (!soundSystemLocal.s_useEAXReverb.GetBool()) {
+			s = "off";
+			effect = AL_EFFECT_NULL;
+			found = true;
+		}
+#endif
 
 		// only update if change in settings
 		if (found && listenerEffect != effect) {
@@ -2007,8 +2016,17 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 #undef alSource3f
 #endif
 
+#ifdef __EMSCRIPTEN__
+#define alSourcei WebEfx_Sourcei
+#define alSource3i WebEfx_Source3i
+			// With s_useEAXReverb 0 the slot has no effect (MixLoop), so only the
+			// enviro suit's direct filter needs switching off here.
+			const bool enviroSuitFilters = enviroSuitActive && idSoundSystemLocal::s_useEAXReverb.GetBool();
+#else
+			const bool enviroSuitFilters = enviroSuitActive;
+#endif
 			if (idSoundSystemLocal::useEFXReverb) {
-				if (enviroSuitActive) {
+				if (enviroSuitFilters) {
 					alSourcei(chan->openalSource, AL_DIRECT_FILTER, listenerFilters[0]);
 					alSource3i(chan->openalSource, AL_AUXILIARY_SEND_FILTER, listenerSlot, 0, listenerFilters[1]);
 				} else {
@@ -2016,6 +2034,10 @@ void idSoundWorldLocal::AddChannelContribution( idSoundEmitterLocal *sound, idSo
 					alSource3i(chan->openalSource, AL_AUXILIARY_SEND_FILTER, listenerSlot, 0, AL_FILTER_NULL);
 				}
 			}
+#ifdef __EMSCRIPTEN__
+#undef alSourcei
+#undef alSource3i
+#endif
 
 
 			if ( ( !looping && chan->leadinSample->hardwareBuffer )

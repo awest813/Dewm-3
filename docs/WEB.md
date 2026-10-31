@@ -100,7 +100,7 @@ runtime evidence and remaining validation blocker above for current status.
 | 3 | **Game DLLs via `dlopen`.** Browsers can't `dlopen` host `.so`s | `sys/posix/posix_main.cpp`, `framework/Common.cpp`, `config.h.in` | **Mandatory `HARDLINK_GAME=ON`**, base **or** d3xp only (pick base first) |
 | 4 | **Filesystem is POSIX sync I/O.** `fopen`/`opendir`/`stat`, `fs_basepath`/`fs_savepath`, 2 GB+ `.pk4` streaming | `framework/FileSystem.cpp`, `sys/posix/posix_main.cpp:Sys_Mkdir/ListFiles`, `sys/linux/main.cpp:187` `Sys_GetPath` | `--preload-file` for demo/shareware paks + IDBFS mount (`/home/web_user/.config/dhewm3`) + `FS.syncfs()` for saves/configs; stub `Sys_GetDriveFreeSpace`; never load whole pak into heap |
 | 5 | **x86 asm / SSE intrinsics / `cpuid` / FPU control.** Won't compile for `wasm32` | `sys/cpu.cpp`, `idlib/math/Math.h`, `idlib/math/Simd_SSE*.cpp`, `Simd_MMX/3DNow.cpp`, `Simd.cpp` dispatch | Build `Simd_Generic.cpp` only; stub `Sys_GetProcessorId()` → `GENERIC`, skip `STREFLOP_FSTCW/MXCSR` under `__EMSCRIPTEN__` |
-| 6 | **OpenAL EFX/HRTF/limiter assumptions.** Emscripten OpenAL is a WebAudio subset | `sound/snd_system.cpp`, `snd_efxfile.cpp`, `snd_world.cpp`, `snd_local.h` | Force `s_useEAXReverb 0`, `s_alHRTF 0`, `s_alOutputLimiter 0`; expect no `alcResetDeviceSOFT`/EFX; handle autoplay-policy resume on first gesture; `s_noSound` fallback must keep working |
+| 6 | **OpenAL EFX/HRTF/limiter assumptions.** Emscripten OpenAL is a WebAudio subset | `sound/snd_system.cpp`, `snd_efxfile.cpp`, `snd_world.cpp`, `snd_local.h` | `s_alHRTF 0`, `s_alOutputLimiter 0`; expect no `alcResetDeviceSOFT`; EFX reverb via `web/openal_efx.js` (2026-10-31; was forced off); handle autoplay-policy resume on first gesture; `s_noSound` fallback must keep working |
 | 7 | **ImGui `opengl2` backend.** Immediate-mode, fixed-function | `libs/imgui/backends/imgui_impl_opengl2.cpp`, `sys/sys_imgui.cpp` (plus `dlopen(libX11)` DPI hack) | Switch to existing `imgui_impl_opengl3` + `imgui_impl_sdl2`, or `IMGUI=OFF` for first bring-up (preset does the latter) |
 | 8 | **Threads (SDL mutex/cond/thread).** Needs SharedArrayBuffer + COOP/COEP or single-thread stubs | `sys/threads.cpp`, `framework/BuildDefines.h` (`MAX_THREADS 10`) | Either `-pthread -sSHARED_MEMORY -sPTHREAD_POOL_SIZE` + proper headers, or DEDICATED-style single-thread stubs (pattern: `sys/stub/openal_stub.cpp`, `stub_gl.cpp`) |
 | 9 | **Sockets + libcurl.** Multiplayer UDP/TCP + HTTP pak downloads don't map to the web | `sys/posix/posix_net.cpp`, `sys/win32/win_net.cpp`, `framework/async/*`, `framework/FileSystem.cpp` curl block, `config.h.in` `ID_ENABLE_CURL` | `ID_ENABLE_CURL OFF` on web; disable server scan/multiplayer, keep loopback/demo playback; downloads via `fetch` shim later |
@@ -2913,6 +2913,138 @@ and slices relative to unique echoed marks (`B.mark()`, `B.after()`).
     anisotropic.
   - Checkboxes are 18 pixels instead of 13.
 
+### EFX reverb: OpenAL Soft's EAX reverb on an AudioWorklet (2026-10-31)
+
+Native applies each map's per-area environmental reverb (`efxs/<map>.efx`,
+31 of 33 campaign maps) through OpenAL Soft 1.23.1: an auxiliary effect slot
+with an EAX reverb, chosen per listener area in `idSoundWorldLocal::MixLoop`,
+slot gain `s_alReverbGain` (0.5), every source sending to it, and low-pass
+filters on the direct and send paths while the enviro suit is worn.
+Emscripten's OpenAL has no EFX, so the web build forced `s_useEAXReverb 0`
+and every room sounded dry.
+
+**Change.**
+
+- `web/openal_reverb.js` ports `alc/effects/reverb.cpp` of OpenAL Soft 1.23.1:
+  early reflections, the modulated late feedback network with its T60
+  shelves, vector all-passes, the two pipelines cross-faded on effect
+  changes, and OpenAL Soft's stereo output (each line panned to first-order
+  ambisonics and decoded with the stereo matrix the dry path uses). It runs as
+  the AudioWorklet `openal-eaxreverb`, one per effect slot. Coefficients and
+  filters use single-precision steps as the C++ does, and the LFO step rounds
+  to nearest like OpenAL Soft's `fastf2u` (truncating it shifted the
+  modulated tail).
+- `web/openal_efx.js` adds EFX to Emscripten's `AL` object: EAX reverb
+  effects (OpenAL Soft's ranges and errors), low-pass filters, effect slots
+  (the effect is copied when attached, plus gain and send auto) and per-source
+  direct filters and sends.
+  - Direct filter: a gain and WebAudio's `highshelf` at 5 kHz. OpenAL Soft's
+    GAINHF is the shelf gain at the reference frequency with slope 1, which is
+    WebAudio's shelf with gain 40·log10(GAINHF) dB; the coefficients are the
+    same.
+  - Send: the source is panned into the slot's B-Format input (W, Y, Z, X)
+    from the same widened direction as the dry path, scaled by the send
+    filter's gain (its GAINHF shelf in front), the reverb's room rolloff and
+    the automatic initial decay of `alu.cpp`. With Doom 3's rolloff 0 only the
+    filter gain remains. Stereo sources send each channel from ±90°.
+  - `ALC_EXT_EFX` is reported only when `AudioWorkletNode` exists (a secure
+    context: localhost or HTTPS); otherwise the web build runs dry as before.
+- `neo/sound/snd_efx_web.cpp` provides the C entry points (`EM_JS`), which the
+  sound system takes from `WebEfx_GetProcAddress` because Emscripten's
+  `alGetProcAddress` only knows its own functions. `WebEfx_Sourcei` and
+  `WebEfx_Source3i` carry `AL_DIRECT_FILTER` and `AL_AUXILIARY_SEND_FILTER`,
+  which Emscripten's `alSourcei`/`alSource3i` reject.
+- `s_useEAXReverb` is an archived cvar on the web too (default 1, as native)
+  and is the kill switch. The web build sets EFX up whenever the browser can
+  run it and switches the reverb live: 0 clears the slot's effect (the worklet
+  idles and sends disconnect) and the enviro suit's direct filter. The stock
+  menu's EAX row becomes a live "Reverb On/Off"; without EFX it stays the
+  read-only "EAX N/A".
+- Native processes the slot on every update. The worklet stops once its
+  input has been silent for four times the -60 dB decay time (the tail is then
+  below -120 dB) and resumes on the next send.
+
+**Measurement.** `build-web/benchtools/altest/revtest.cpp` (ignored, as
+`pantest.cpp` above) loads the native build's `OpenAL32.dll` with the wave
+backend (`alsoft.ini`: `drivers = wave`, 44.1 kHz, `sample-type = float32`,
+`output-limiter = false`, through `ALSOFT_CONF`) and Doom 3's source settings.
+Each case starts the test source (impulse at sample 4410) and a hard-left
+marker (impulse at sample 0, no send) with `alSourcePlayv`, so every response
+is aligned to the sample; the dry case lands exactly on 0.595662 per channel.
+Fifteen cases: five effects, five directions (front, right, behind,
+up-left, at the listener), slot gain 0.5, the enviro suit's send filter, a
+stereo source, the enviro suit's direct filter alone, and dry plus wet with
+both filters. Two effect sets: Doom 3 presets read from the local game files
+(alphalabs1 "0" and "11", alphalabs2 "96" and "106", the latter the one with
+modulation; plus the EFX defaults), and synthetic presets in the same ranges,
+including reflection and late pans, for the committed fixture. The modulation
+LFO's position depends on how long native ran the slot, so it was found by
+search (it is a single index for the whole response).
+
+Error energy of web minus native over 3 s, both channels:
+
+| Cases | Doom 3 presets | Synthetic presets |
+| --- | --- | --- |
+| small room, five directions, slot gain 0.5, send filter, stereo source | -101.7 to -103.8 dB | -100.8 to -104.4 dB |
+| large room / dry room / defaults or pans | -136.9 / -134.2 / -135.3 dB | -136.3 / -136.5 / -135.3 dB |
+| modulated | -119.3 dB | -120.8 dB |
+| enviro suit direct filter; dry plus wet with both filters | -133.3; -112.2 dB | -133.3; -111.2 dB |
+
+The largest single-sample difference is 2.5e-6 of the response peak and the
+10 ms energy envelopes agree within 0.001 dB; 16-bit output quantizes at
+-98 dB. The residual is float rounding of per-sample arithmetic in the small
+room's long recirculation. In Chrome 156 an `OfflineAudioContext` at 44.1 kHz
+running the real graph (`openal_stereo.js`, `openal_efx.js`, WebAudio
+`highshelf`, merger, splitter and the worklet) gives the same figures within
+0.6 dB, all below -100 dB (`build-web/benchtools/efxoffline.js`), except the
+modulated case, whose LFO position cannot be set in a real worklet (level
+within 0.001 dB).
+
+**Live.** In Alpha Labs 1 and Mars City 1 the log shows `OpenAL: found EFX
+extension` and `sound: found efxs/<map>.efx`, the slot carries the listener
+area's effect and every playing source sends to it (4 of 4 and 3 of 3). Over
+0.7 s the worklet's output measured RMS 0.025 and 0.034 against 0.047 and
+0.045 for the whole mix. `s_useEAXReverb 0` silences the worklet and drops
+every send within a frame; 1 restores them (`build-web/benchtools/efxlive.js`).
+
+**Cost.** The reverb runs on the audio thread. In Node on this laptop's
+Ryzen 5 7520U it takes 1.8–1.9% of one core per slot (18–19 ms per second of
+48 kHz audio), 2.8% with modulation and 3.3% while two pipelines cross-fade
+after an area change. Profiling found two hot spots in the first version: a
+`Math.trunc` call per sample for the modulated delay, and the LFO sine, which
+is now skipped at modulation depth 0 (1,584 of the game's 1,597 presets). The
+main thread only updates four send gains per moving source. Interleaved A/B
+in five campaign scenes at the 30 FPS cap (`build-web/benchtools/efxperf.js`,
+three rounds of 300 frames each way, `s_useEAXReverb` switched live, measured
+before those two optimizations):
+
+| Scene | Sources (sending) | FPS on / off | Frame CPU mean on / off | p95 on / off |
+| --- | --- | --- | --- | --- |
+| imp (combat, `god`) | 7–8 (all) | 29.9 / 30.0 | 10.4 / 11.6 ms | 14.2 / 15.7 ms |
+| delta5 | 10 (all) | 30.0 / 30.0 | 9.4 / 9.5 ms | 12.3 / 12.8 ms |
+| enpro | 7–14 (all) | 29.1 / 28.8 | 17.1 / 16.3 ms | 32.8 / 29.5 ms |
+| mc_underground | 11–12 (all) | 30.0 / 29.9 | 6.7 / 6.6 ms | 10.5 / 10.9 ms |
+| hell1 (no efx file) | 13 (none) | 30.0 / 30.0 | 6.3 / 5.9 ms | 9.3 / 8.7 ms |
+
+The differences are within the spread between rounds (enpro's rounds range
+from 8 to 28 ms either way), and Chrome's `AudioContext.playbackStats`
+reported no underruns in any round. Hell 1 has no efx file natively either,
+so it sends nothing.
+
+**Not matched.** Only what Doom 3 uses: the EAX reverb effect, low-pass
+filters and send 0. Source `AL_ROOM_ROLLOFF_FACTOR`, `AL_AIR_ABSORPTION_FACTOR`
+and the distance-based HF/LF send adjustments are not modeled; with rolloff 0
+they are inactive natively as well. On an effect change the input cross-fade
+lasts one render quantum (128 samples) instead of one OpenAL update; both
+pipelines' tails are processed as natively.
+
+`tests/web_openal_efx_check.js` (CI) runs the three post-js files on a small
+WebAudio model (gain, Chromium's `highshelf` coefficients, merger, splitter,
+the worklet's processor) and compares all fifteen synthetic cases with the
+native responses in `tests/openal_native_reverb.js` (the 32 loudest early
+samples within 2e-5 of the peak, 10 ms energy within 0.01 dB), and checks the
+EFX API's errors and copy semantics.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,
@@ -2932,3 +3064,7 @@ and slices relative to unique echoed marks (`B.mark()`, `B.after()`).
 - `tests/render_scenes_parity.cfg` — twelve campaign render views.
 - `neo/sys/web_libm.cpp`, `tests/web_trig_check.py`, `tests/trig_native.txt` —
   UCRT-exact `sinf`/`cosf` for the web build and their native fixtures.
+- `web/openal_reverb.js`, `web/openal_efx.js`, `neo/sound/snd_efx_web.cpp` —
+  OpenAL EFX for the web build (OpenAL Soft's EAX reverb as an AudioWorklet);
+  `tests/web_openal_efx_check.js` and `tests/openal_native_reverb.js` check it
+  against native OpenAL Soft.

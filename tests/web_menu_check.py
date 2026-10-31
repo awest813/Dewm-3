@@ -72,6 +72,8 @@ struct Cvars {
  void SetModifiedFlags(int){}
 } cvars;
 Cvars *cvarSystem=&cvars;
+struct Sound {int efx=0;int IsEFXAvailable(){return efx;}} sound;
+Sound *soundSystem=&sound;
 struct Spec {int value=1;int GetInteger(){return value;}void SetInteger(int v){value=v;}} com_machineSpec;
 std::vector<std::string> trace;
 int com_frameTime=0;
@@ -152,6 +154,10 @@ int main(){
  trace.clear();menuCommand({{"video","restart"}});check(trace==std::vector<std::string>{"cvar write render","reloadImages reload\n","cvar read render"},"Apply reloads images with valid argument and refreshes values");
  trace.clear();cvars.SetCVarInteger("s_numberOfSpeakers",6);menuCommand({{"sound","speakers"}});check(cvars.GetCVarInteger("s_numberOfSpeakers")==2&&trace==std::vector<std::string>{"cvar read sound"},"speaker choice stays stereo without audio restart");
  trace.clear();cvars.SetCVarBool("s_useEAXReverb",true);menuCommand({{"sound","eax"}});check(!cvars.GetCVarInteger("s_useEAXReverb")&&trace==std::vector<std::string>{"cvar read sound"},"unavailable EAX stays off without blocking dialog");
+ sound.efx=1;trace.clear();cvars.SetCVarBool("s_useEAXReverb",true);menuCommand({{"sound","eax"}});check(cvars.GetCVarInteger("s_useEAXReverb")==1&&trace==std::vector<std::string>{"cvar read sound"},"available EFX reverb stays on and switches live");sound.efx=0;
+ auto reverb=Web_MenuChoice("guis/mainmenu.gui","EAXPrimary","s_useEAXReverb");
+ check(reverb&&!reverb->readOnly&&!std::strcmp(reverb->replacementCvar,"s_useEAXReverb")&&!std::strcmp(reverb->choices,"On;Off")&&!std::strcmp(reverb->values,"1;0"),"reverb row toggles EFX reverb live");
+ check(webMenuEaxUnavailable.readOnly&&!webMenuEaxUnavailable.replacementCvar&&!std::strcmp(webMenuEaxUnavailable.window,"EAXPrimary"),"reverb row read-only without EFX");
  trace.clear();menuCommand({{"sound","drivar"}});check(trace.empty(),"legacy backend does not restart WebAudio");
  idSliderWindow slider;sysEvent_t right{SE_KEY,K_RIGHTARROW,1},left{SE_KEY,K_LEFTARROW,1};
  slider.value=slider.high;slider.HandleEvent(&right,nullptr);check(slider.written==slider.high,"brightness upper endpoint clamps before cvar write");

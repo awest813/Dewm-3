@@ -17,6 +17,10 @@ on:
       - 'tests/render_state_parity_check.py'
       - 'tests/test_render_state_parity.py'
       - 'tests/test_web_shell.js'
+      - 'tests/web_openal_check.js'
+      - 'tests/openal_native_panning.js'
+      - 'tests/web_openal_efx_check.js'
+      - 'tests/openal_native_reverb.js'
       - 'tests/web_mouse_check.py'
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
@@ -82,6 +86,10 @@ on:
       - 'tests/render_state_parity_check.py'
       - 'tests/test_render_state_parity.py'
       - 'tests/test_web_shell.js'
+      - 'tests/web_openal_check.js'
+      - 'tests/openal_native_panning.js'
+      - 'tests/web_openal_efx_check.js'
+      - 'tests/openal_native_reverb.js'
       - 'tests/web_mouse_check.py'
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
@@ -190,6 +198,10 @@ jobs:
 
       - name: Check web shell data and input handling
         run: node tests/test_web_shell.js
+      - name: OpenAL Soft stereo panning
+        run: node tests/web_openal_check.js
+      - name: OpenAL EFX reverb against native OpenAL Soft
+        run: node tests/web_openal_efx_check.js
 
   compile:
     name: Emscripten compile and link

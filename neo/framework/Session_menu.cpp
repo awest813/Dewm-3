@@ -916,7 +916,10 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 			}
 			if ( !vcmd.Icmp( "eax" ) ) {
 #ifdef __EMSCRIPTEN__
-				cvarSystem->SetCVarBool("s_useEAXReverb", false);
+				// With EFX the reverb switches live (snd_world.cpp); no restart dialog.
+				if ( soundSystem->IsEFXAvailable() != 1 ) {
+					cvarSystem->SetCVarBool("s_useEAXReverb", false);
+				}
 				guiActive->HandleNamedEvent("cvar read sound");
 #else
 				if ( cvarSystem->GetCVarBool( "s_useEAXReverb" ) ) {
@@ -1037,7 +1040,9 @@ void idSessionLocal::HandleMainMenuCommands( const char *menuCommand ) {
 				com_machineSpec.SetInteger(1);
 				cmdSystem->BufferCommandText(CMD_EXEC_NOW, "execMachineSpec nores\n");
 				cvarSystem->SetCVarInteger("s_numberOfSpeakers", 2);
-				cvarSystem->SetCVarBool("s_useEAXReverb", false);
+				if ( soundSystem->IsEFXAvailable() != 1 ) {
+					cvarSystem->SetCVarBool("s_useEAXReverb", false);
+				}
 				guiActive->HandleNamedEvent("cvar read render");
 				guiActive->HandleNamedEvent("cvar read sound");
 #else

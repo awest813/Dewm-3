@@ -70,11 +70,14 @@ idCVar idSoundSystemLocal::s_reverbFeedback( "s_reverbFeedback", "0.333", CVAR_S
 idCVar idSoundSystemLocal::s_enviroSuitVolumeScale( "s_enviroSuitVolumeScale", "0.9", CVAR_SOUND | CVAR_FLOAT, "" );
 idCVar idSoundSystemLocal::s_skipHelltimeFX( "s_skipHelltimeFX", "0", CVAR_SOUND | CVAR_BOOL, "" );
 
-#if !defined(ID_DEDICATED) && !defined(__EMSCRIPTEN__)
+#if !defined(ID_DEDICATED)
 idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "1", CVAR_SOUND | CVAR_BOOL | CVAR_ARCHIVE, "use EFX reverb" );
-idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ARCHIVE, "specifies maximum uncompressed sample length in seconds" );
 #else
 idCVar idSoundSystemLocal::s_useEAXReverb( "s_useEAXReverb", "0", CVAR_SOUND | CVAR_BOOL | CVAR_ROM, "EFX not available in this build" );
+#endif
+#if !defined(ID_DEDICATED) && !defined(__EMSCRIPTEN__)
+idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ARCHIVE, "specifies maximum uncompressed sample length in seconds" );
+#else
 idCVar idSoundSystemLocal::s_decompressionLimit( "s_decompressionLimit", "6", CVAR_SOUND | CVAR_INTEGER | CVAR_ROM, "specifies maximum uncompressed sample length in seconds" );
 #endif
 
@@ -490,6 +493,10 @@ void idSoundSystemLocal::Init() {
 		if (alcIsExtensionPresent(openalDevice, "ALC_EXT_EFX")) {
 			common->Printf( "OpenAL: found EFX extension\n" );
 			EFXAvailable = 1;
+#ifdef __EMSCRIPTEN__
+			// web/openal_efx.js adds ALC_EXT_EFX; snd_efx_web.cpp has the functions.
+#define alGetProcAddress WebEfx_GetProcAddress
+#endif
 
 			alGenEffects = (LPALGENEFFECTS)alGetProcAddress("alGenEffects");
 			alDeleteEffects = (LPALDELETEEFFECTS)alGetProcAddress("alDeleteEffects");
@@ -507,6 +514,9 @@ void idSoundSystemLocal::Init() {
 			alIsAuxiliaryEffectSlot = (LPALISAUXILIARYEFFECTSLOT)alGetProcAddress("alIsAuxiliaryEffectSlot");;
 			alAuxiliaryEffectSloti = (LPALAUXILIARYEFFECTSLOTI)alGetProcAddress("alAuxiliaryEffectSloti");
 			alAuxiliaryEffectSlotf = (LPALAUXILIARYEFFECTSLOTF)alGetProcAddress("alAuxiliaryEffectSlotf");
+#ifdef __EMSCRIPTEN__
+#undef alGetProcAddress
+#endif
 		} else {
 			common->Printf( "OpenAL: EFX extension not found\n" );
 			EFXAvailable = 0;
@@ -562,7 +572,13 @@ void idSoundSystemLocal::Init() {
 		// adjust source count to allow for at least eight stereo sounds to play
 		openalSourceCount -= 8;
 
+#ifdef __EMSCRIPTEN__
+		// The web build sets up EFX whenever the browser can run it and lets
+		// s_useEAXReverb switch the reverb live (snd_world.cpp).
+		useEFXReverb = EFXAvailable == 1;
+#else
 		useEFXReverb = idSoundSystemLocal::s_useEAXReverb.GetBool();
+#endif
 		efxloaded = false;
 
 	}
