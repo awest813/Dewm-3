@@ -273,6 +273,83 @@ If you have questions concerning this license or the applicable additional terms
 #include <errno.h>
 #include <math.h>
 
+#if defined(__EMSCRIPTEN__) && defined(__cplusplus)
+/*
+Native float-argument math precision on the web.
+
+No translation unit of the native Windows build includes <cmath>, so MSVC sees
+only the C library's double functions: an unqualified sin( float ), atan2,
+pow, sqrt, floor, ... promotes its arguments, returns double, and the rest of
+the expression is evaluated in double. libc++ always adds float overloads to
+<math.h>, so the same source evaluated in float on the web, rounding early in
+collision, physics, AI aim, particles and the projection matrix. The macros
+below give every engine translation unit the native overload set; abs() keeps
+its float overload, as on MSVC. Calls that name the float functions (sinf,
+idMath::Sin) are unaffected. The overload rule was measured with both
+compilers on the engine's own headers (docs/WEB.md, 2026-10-07).
+
+The standard headers the engine uses are included first, so their own
+std::sqrt( and similar calls are parsed before the macros exist. A header
+added after this point that calls one of these names qualified will fail to
+compile rather than change precision silently.
+*/
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <set>
+#include <unordered_map>
+#include <vector>
+
+#define ID_WEB_NATIVE_MATH1( name ) \
+	static inline double idWebNativeMath_##name( double x ) { return ::name( x ); }
+#define ID_WEB_NATIVE_MATH2( name ) \
+	static inline double idWebNativeMath_##name( double x, double y ) { return ::name( x, y ); }
+ID_WEB_NATIVE_MATH1( sin ) ID_WEB_NATIVE_MATH1( cos ) ID_WEB_NATIVE_MATH1( tan )
+ID_WEB_NATIVE_MATH1( asin ) ID_WEB_NATIVE_MATH1( acos ) ID_WEB_NATIVE_MATH1( atan )
+ID_WEB_NATIVE_MATH1( sinh ) ID_WEB_NATIVE_MATH1( cosh ) ID_WEB_NATIVE_MATH1( tanh )
+ID_WEB_NATIVE_MATH1( exp ) ID_WEB_NATIVE_MATH1( exp2 ) ID_WEB_NATIVE_MATH1( log )
+ID_WEB_NATIVE_MATH1( log10 ) ID_WEB_NATIVE_MATH1( log2 ) ID_WEB_NATIVE_MATH1( sqrt )
+ID_WEB_NATIVE_MATH1( cbrt ) ID_WEB_NATIVE_MATH1( floor ) ID_WEB_NATIVE_MATH1( ceil )
+ID_WEB_NATIVE_MATH1( fabs ) ID_WEB_NATIVE_MATH1( round ) ID_WEB_NATIVE_MATH1( trunc )
+ID_WEB_NATIVE_MATH2( atan2 ) ID_WEB_NATIVE_MATH2( pow ) ID_WEB_NATIVE_MATH2( fmod )
+ID_WEB_NATIVE_MATH2( hypot ) ID_WEB_NATIVE_MATH2( fmin ) ID_WEB_NATIVE_MATH2( fmax )
+ID_WEB_NATIVE_MATH2( copysign )
+static inline double idWebNativeMath_ldexp( double x, int e ) { return ::ldexp( x, e ); }
+#undef ID_WEB_NATIVE_MATH1
+#undef ID_WEB_NATIVE_MATH2
+
+#define sin( x )			idWebNativeMath_sin( x )
+#define cos( x )			idWebNativeMath_cos( x )
+#define tan( x )			idWebNativeMath_tan( x )
+#define asin( x )			idWebNativeMath_asin( x )
+#define acos( x )			idWebNativeMath_acos( x )
+#define atan( x )			idWebNativeMath_atan( x )
+#define sinh( x )			idWebNativeMath_sinh( x )
+#define cosh( x )			idWebNativeMath_cosh( x )
+#define tanh( x )			idWebNativeMath_tanh( x )
+#define exp( x )			idWebNativeMath_exp( x )
+#define exp2( x )			idWebNativeMath_exp2( x )
+#define log( x )			idWebNativeMath_log( x )
+#define log10( x )			idWebNativeMath_log10( x )
+#define log2( x )			idWebNativeMath_log2( x )
+#define sqrt( x )			idWebNativeMath_sqrt( x )
+#define cbrt( x )			idWebNativeMath_cbrt( x )
+#define floor( x )			idWebNativeMath_floor( x )
+#define ceil( x )			idWebNativeMath_ceil( x )
+#define fabs( x )			idWebNativeMath_fabs( x )
+#define round( x )			idWebNativeMath_round( x )
+#define trunc( x )			idWebNativeMath_trunc( x )
+#define atan2( y, x )		idWebNativeMath_atan2( y, x )
+#define pow( x, y )			idWebNativeMath_pow( x, y )
+#define fmod( x, y )		idWebNativeMath_fmod( x, y )
+#define hypot( x, y )		idWebNativeMath_hypot( x, y )
+#define fmin( x, y )		idWebNativeMath_fmin( x, y )
+#define fmax( x, y )		idWebNativeMath_fmax( x, y )
+#define copysign( x, y )	idWebNativeMath_copysign( x, y )
+#define ldexp( x, e )		idWebNativeMath_ldexp( x, e )
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

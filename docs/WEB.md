@@ -2913,6 +2913,213 @@ and slices relative to unique echoed marks (`B.mark()`, `B.after()`).
     anisotropic.
   - Checkboxes are 18 pixels instead of 13.
 
+### Native math precision, UCRT float functions and lazy texture binds (2026-10-07)
+
+**Overload precision.** No translation unit of the native build includes
+`<cmath>` (checked with `/showIncludes` over all 289), so MSVC sees only the C
+library's double functions: unqualified `sin(float)`, `atan2`, `pow`, `sqrt`,
+`floor`, ... return double and the surrounding expression is evaluated in
+double. libc++ always adds float overloads, so about 330 engine call sites
+(collision, ragdolls, rotations, particles, projection, image tables) rounded
+early on the web. Earlier sections fixed individual sites. `sys/platform.h` now
+routes every unqualified call through a double helper on the web (macros
+after the standard headers the engine uses); `abs` keeps its float overload,
+as on MSVC. All twelve campaign seeds still match native; captures move by
+at most a few levels, and native MAE improved on five views. It rose by up to
+1.2e-5 on two views.
+
+**UCRT float functions.** `idlib/math/WebMath.h` now also ports AMD win-libm's
+`asinf`, `acosf`, `atanf`, `atan2f` (with MSVC's fused operations), `tanf`,
+`expf` and `logf` (FMA3 assembly paths), plus the exact Payne-Hanek
+reductions for `sinf`, `tanf` and `cosf`, replacing the old double fallback.
+`sys/web_libm.cpp` installs them. Verification:
+
+- natively, every one of the 2^32 inputs of all eight unary functions matches
+  UCRT, as do 400 million random `atan2f` pairs;
+- in WebAssembly with the production flags, chunk digests of all 2^32 inputs
+  (and 2^32 generated `atan2f` pairs) equal native UCRT's, NaN payloads aside;
+- `tests/web_trig_check.py` adds 2,346 checked-in UCRT fixtures
+  (`tests/libm_native.txt`), checked through the ports and the linked
+  symbols; without `web_libm.cpp`, 1,222 of 6,983 differ.
+
+`sinf`/`cosf` of infinity or NaN used `x - x`, which `-ffinite-math-only`
+folded to 0; they now return UCRT's NaN bit patterns. UCRT's `powf` is not in
+win-libm (it differs from rounded double `pow` in about 0.009% of inputs) and
+stays musl's; only gamepad look and audio gain reach it.
+
+**UCRT double functions** (2026-10-30). The shim sends float arguments to the
+*double* functions, where musl and UCRT differ by one ulp in 0.01-18% of
+inputs (atan2 most often). That never changes a directly rounded float, but it
+can when the result feeds further double arithmetic. `WebMath.h` now also
+ports win-libm's double `sin`, `cos`, `tan` (FMA3 assembly paths, with the
+Boldo-Daumas-Li and Payne-Hanek reductions and their tail terms) and `atan`,
+`atan2`, `asin`, `acos` (C sources with MSVC's fused operations);
+`web_libm.cpp` installs them, plus `sincos`, which LLVM may substitute for a
+sin/cos pair. The definitions use parenthesized names, `double (sin)(double)`,
+because `platform.h` defines function-like macros with those names.
+`tests/libm_double_native.txt` adds 1,400 UCRT results (special values,
+float-promoted and random doubles, huge arguments); the wasm check passes all
+8,383 float and double fixtures through the ports and the linked symbols.
+Natively, the code extracted from the shipped header matches UCRT for every
+one of the 2^32 float-promoted inputs (the arguments the overload shim
+produces) and 100 million random doubles per function, and for 400 million
+random `atan2` pairs. All twelve campaign captures stay pixel-identical with
+native-matching seeds.
+`exp`, `log` and `pow` (one, two and ten call sites) are not ported.
+
+**Lazy texture binds** (`r_webLazyTextureBinds`, default on). `glBindTexture`
+records the binding; WebGL receives it before texture work on that unit or
+before a draw, for exactly the units and targets the draw's program samples
+(read back once per program). All twelve views are pixel-identical. It saves
+only about 1% of binds: `BindNull` disables texturing rather than binding 0,
+and `idImage::Bind` already skips repeats. `webperf` now counts texture binds.
+
+**Where combat frames go** (imp scene, 1003x752). Chrome's GPU-process main
+thread is ~98% busy executing the command stream (about 9,000 WebGL calls and
+1,160 draws per frame) while the page's main thread is ~60% busy. Particles
+cost ~11 ms of GPU time (soft particles ~5 ms of that). A microbenchmark in the
+same browser puts command cost at about 3 µs per draw, plus 1.8 µs for three
+texture binds; the in-game ~30 µs per draw was measured while other programs
+used about 70% of this GPU. Reordering interactions within a light would save
+23% of surface binds but is not provably exact under float blending, so it
+was not done. At the 30 cap, seven of nine scenes hold 30 on an uncontended
+run; imp measured 22.4 FPS then and 19.4 under contention.
+
+### Rendering audit: view effects, gamma, widescreen and settings (2026-10-30)
+
+Every earlier parity capture used 4:3, gamma 1, the fixture's graphics
+settings and `g_skipViewEffects 1`. Three new fixture sets cover the rest; all
+run through `native_capture.py` and `run_fixture.js`, which now take
+`--size WxH` / `width=… height=…` for non-4:3 drawing buffers.
+
+- `tests/render_effects_parity.cfg` (`--fixture effects`): HUD and view model,
+  forced tunnel vision, berserk (crop render, `_scratch` copy, overlay),
+  `testDamage damage_generic` (blood blob, double vision, view kick,
+  low-health tunnel) and r_gamma 1.3 / r_brightness 1.5.
+- `tests/render_settings_parity.cfg` (`--fixture settings`): each Graphics
+  panel toggle on its own: dynamic shadows off, bump maps off, specular off,
+  standard texture filtering, soft particles off (hell1).
+- The twelve campaign views at 854x480.
+
+**Gamma fix.** Native `r_gammaInShader` injects `POW` only into ARB fragment
+programs; fixed-function draws (HUD and GUI, plain texture stages, fog, blend
+lights, the sky box) are not corrected. The web's fixed-function emulation
+(flat and sky programs) applied fragment env 21 anyway, so at brightness 1.5
+the HUD and glow stages were brighter than native (MAE 1.45, 3.6% of pixels
+off by more than 16). Those programs now use identity gamma unless an ARB
+fragment program is enabled (`GLES_ProgramGamma`); native MAE 0.012. Four new
+renderer-state checks cover the rule; gamma-1 captures are unchanged.
+
+**Results** (native MAE, pixels off by more than 16):
+
+| Set | Views | MAE | over 16 |
+| --- | --- | ---: | ---: |
+| campaign, 640x480 | 12 | 0.0025–0.0112 | ≤ 0.001% |
+| campaign, 854x480 | 12 | 0.0030–0.0131 | ≤ 0.0013% |
+| HUD, tunnel, damage | 3 | 0.0073 | 0 |
+| gamma 1.3 / brightness 1.5 | 1 | 0.0120 | 0.0003% |
+| shadows, bump, specular, filtering off | 4 | 0.0034–0.0062 | 0 |
+| soft particles off (hell1) | 1 | 0.0280 | 0.0016% |
+
+**Remaining differences, classified.**
+
+- About 1–1.5% of pixels differ by one level, unbiased (as many brighter as
+  darker), usually in one channel. This is rounding from different shader
+  compilers (ANGLE/D3D against the AMD OpenGL driver compiling the native ARB
+  programs) on the same GPU; it cannot be removed without the driver's
+  compiler. Disabling in-shader gamma does not change it.
+- Single outlier pixels (hell1 177, reflect_glass 120, imp 61 levels) are
+  triangle edges: `webpixel` shows the web covering a silhouette pixel of a
+  lava-glow or character surface that native just misses (native's GL driver
+  multiplies the MVP; the shim does it in C++, so vertices differ in the last
+  bit).
+- Soft particles off: depth-hacked particles are drawn correctly
+  (`webpixel` now prints the projection's depth term and the surface's model
+  depth hack; `websurfaces` prints the hack and soft flag), but heat-haze
+  passes that resample the scene amplify the one-level noise, and two
+  screen-edge heat-haze pixels differ in both modes.
+- Berserk: native's *screenshot* of this view composites the level-loading
+  screen (its tiled screenshot path reads stale buffers around the crop
+  copy). A capture of the live native window (`PrintWindow`) shows the
+  correct berserk view, which matches the web; compare berserk against a live
+  capture, not `native-berserk.png`.
+- Tunnel vision at `g_testHealthVision 25` draws nothing visible in either
+  build.
+
+### Audio audit: OpenAL Soft stereo panning (2026-10-31)
+
+Doom 3 computes distance falloff itself and gives every OpenAL source rolloff
+0, so the OpenAL library only pans. Native uses OpenAL Soft; the web build used
+Emscripten's OpenAL, which spatializes mono sources with a WebAudio
+`PannerNode` (`equalpower`).
+
+**Measurement.** `build-web/benchtools/altest/pantest.cpp` loads the native
+build's own `OpenAL32.dll`, plays a mono tone with Doom 3's source settings at
+152 positions (ten named ones, then 36 azimuths at elevations 0, 30, 60 and
+-30 degrees) and records OpenAL Soft's wave-file output. The WebAudio side was
+measured in an `OfflineAudioContext`.
+
+| Position | Native (OpenAL Soft) L / R | WebAudio PannerNode L / R |
+| --- | --- | --- |
+| front, or at the listener | 0.596 / 0.596 | 0.707 / 0.707 |
+| 30° right | 0.214 / 0.921 | 0.500 / 0.866 |
+| 45° right | 0.075 / 0.999 | 0.383 / 0.924 |
+| 60° or 90° right | 0 / 1 | 0.259 / 0.966, 0 / 1 |
+| behind | 0.404 / 0.404 | 0.707 / 0.707 |
+| reference distance 0, rolloff 0 | 0.596 / 0.596 | **silent** |
+
+So on the web, front and non-positional sounds (UI, player, music in mono)
+played about 1.5 dB louder than native, sounds behind about 4.9 dB louder,
+panning was narrower, and the three sound shaders with `minDistance 0`
+(`computers_02`–`04`) were inaudible. Stereo buffers are not spatialized by
+either library (left to left at gain 1).
+
+**Model.** The native data is OpenAL Soft's stereo decode of first-order
+ambisonics after widening frontal azimuths by 1.5 (to at most 90 degrees):
+`left/right = 0.5 W ± 0.288675135 Y + 0.0552305643 X`, unclamped (the far
+channel is slightly phase-inverted just past 90 degrees), with a source at the
+listener panned to the front. It matches all 152 measurements within 0.0006.
+
+**Change.** `web/openal_stereo.js` (linked with `--post-js`) replaces
+Emscripten's panner for spatialized sources with two gains and a channel
+merger computed from that model, applies OpenAL's distance formulas (rolloff
+0 leaves the level alone at any reference distance) and keeps Emscripten's
+Doppler handling. In a live map every playing mono source uses it.
+`tests/web_openal_check.js` checks 56 native directions (`tests/openal_native_panning.js`)
+and runs in CI.
+
+**Not matched: EFX reverb.** Native applies each map's per-area environmental
+reverb (`efxs/<map>.efx`, 31 of 33 campaign maps) through OpenAL Soft's EAX
+reverb; the web build has `s_useEAXReverb 0` because Emscripten's OpenAL has
+no EFX API, so rooms sound dry. Matching it needs the EFX entry points in the
+OpenAL shim and an AudioWorklet port of OpenAL Soft's reverb.
+
+### Gameplay parity after the math changes, and a live-AI soak (2026-10-31)
+
+The native Windows build was rebuilt from this branch and every gameplay
+fixture re-run against fresh native references (`build-web/benchtools/parity.py`
+runs native, browser and verifier for each). With the native overload rule,
+the UCRT float functions and the UCRT double functions all in the web build,
+**all 17 checks pass** across the twelve fixtures: movement, save/weapon
+lifecycle, explosive weapons and projectiles, melee, BFG damage, beam,
+multi-target and removal, player death, stock AI pursuit, ranged combat with
+retaliation, and saving/restoring a projectile in flight.
+
+**Soak.** `tests/soak_parity.cfg` runs three maps with live monsters (an imp
+and a maintenance zombie in Mars City 2, a fat zombie and a commando in Alpha
+Labs 1, Delta 2a's placed enemies), god mode so play continues, and scripted
+strafing, movement and fire, printing clocks and the random seed every 30
+ticks. `tests/soak_parity_check.py` compares every state, player checkpoint and
+projectile snapshot exactly. Native and web match in all 69 clock/seed states,
+69 player checkpoints and 838 projectile snapshots (11.7 s of game time). Its
+asset-free regressions (`tests/test_soak_parity.py`) run in CI.
+
+**Bench fix.** The shell keeps only the last 200,000 characters of console
+text; the soak's log is larger, so `run_console_fixture.js` lost its start mark
+and timed out. It now waits for a unique completion token and reads the run
+from the engine's own `dhewm3log.txt` in the browser file system (as native
+references do), falling back to console text.
+
 ## 10. Files added for web
 
 - `web/shell.html` — Emscripten shell (`{{{ SCRIPT }}}`, canvas + console,
@@ -2930,5 +3137,7 @@ and slices relative to unique echoed marks (`B.mark()`, `B.after()`).
   render and console fixture runners, native reference capture, GPU timing,
   capture sink (see the 2026-10-06 audit).
 - `tests/render_scenes_parity.cfg` — twelve campaign render views.
+- `tests/render_effects_parity.cfg`, `tests/render_settings_parity.cfg` —
+  player view effects, HUD, gamma and per-setting views.
 - `neo/sys/web_libm.cpp`, `tests/web_trig_check.py`, `tests/trig_native.txt` —
   UCRT-exact `sinf`/`cosf` for the web build and their native fixtures.

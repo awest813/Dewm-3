@@ -17,11 +17,15 @@ on:
       - 'tests/render_state_parity_check.py'
       - 'tests/test_render_state_parity.py'
       - 'tests/test_web_shell.js'
+      - 'tests/web_openal_check.js'
+      - 'tests/openal_native_panning.js'
       - 'tests/web_mouse_check.py'
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
       - 'tests/web_trig_check.py'
       - 'tests/trig_native.txt'
+      - 'tests/libm_native.txt'
+      - 'tests/libm_double_native.txt'
       - 'tests/rotation_native.txt'
       - 'tests/rotation_acos_native.txt'
       - 'tests/web_fov_check.py'
@@ -50,6 +54,11 @@ on:
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
       - 'tests/render_scenes_parity.cfg'
+      - 'tests/render_effects_parity.cfg'
+      - 'tests/render_settings_parity.cfg'
+      - 'tests/soak_parity.cfg'
+      - 'tests/soak_parity_check.py'
+      - 'tests/test_soak_parity.py'
       - 'tests/test_player_death_parity.py'
       - 'tests/entity_parity_check.py'
       - 'tests/test_entity_parity.py'
@@ -82,11 +91,15 @@ on:
       - 'tests/render_state_parity_check.py'
       - 'tests/test_render_state_parity.py'
       - 'tests/test_web_shell.js'
+      - 'tests/web_openal_check.js'
+      - 'tests/openal_native_panning.js'
       - 'tests/web_mouse_check.py'
       - 'tests/web_angle_check.py'
       - 'tests/web_rotation_check.py'
       - 'tests/web_trig_check.py'
       - 'tests/trig_native.txt'
+      - 'tests/libm_native.txt'
+      - 'tests/libm_double_native.txt'
       - 'tests/rotation_native.txt'
       - 'tests/rotation_acos_native.txt'
       - 'tests/web_fov_check.py'
@@ -115,6 +128,11 @@ on:
       - 'tests/player_death_parity.cfg'
       - 'tests/render_hangar_parity.cfg'
       - 'tests/render_scenes_parity.cfg'
+      - 'tests/render_effects_parity.cfg'
+      - 'tests/render_settings_parity.cfg'
+      - 'tests/soak_parity.cfg'
+      - 'tests/soak_parity_check.py'
+      - 'tests/test_soak_parity.py'
       - 'tests/test_player_death_parity.py'
       - 'tests/entity_parity_check.py'
       - 'tests/test_entity_parity.py'
@@ -178,6 +196,8 @@ jobs:
 
       - name: Check ranged combat encounter verifier
         run: python3 -m unittest discover -s tests -p test_ranged_combat_parity.py
+      - name: Soak parity verifier regressions
+        run: python3 -m unittest discover -s tests -p test_soak_parity.py
 
       - name: Syntax-check scripts
         run: |
@@ -190,6 +210,8 @@ jobs:
 
       - name: Check web shell data and input handling
         run: node tests/test_web_shell.js
+      - name: OpenAL Soft stereo panning
+        run: node tests/web_openal_check.js
 
   compile:
     name: Emscripten compile and link

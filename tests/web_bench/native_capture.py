@@ -19,12 +19,13 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[2]
-FIXTURES = {'hangar': 'tests/render_hangar_parity.cfg', 'scenes': 'tests/render_scenes_parity.cfg'}
+FIXTURES = {'hangar': 'tests/render_hangar_parity.cfg', 'scenes': 'tests/render_scenes_parity.cfg',
+            'effects': 'tests/render_effects_parity.cfg', 'settings': 'tests/render_settings_parity.cfg'}
 
 
 def views(source):
     text = (root / source).read_text(encoding='utf-8')
-    return re.findall(r'^echo (?:HANGAR_VIEW|SCENE_VIEW) (\S+)', text, re.M)
+    return re.findall(r'^echo (?:HANGAR_VIEW|SCENE_VIEW|EFFECT_VIEW|SETTING_VIEW) (\S+)', text, re.M)
 
 
 def main():
@@ -35,18 +36,22 @@ def main():
     ap.add_argument('--out', default='build-web/bench/captures')
     ap.add_argument('--label', default='native')
     ap.add_argument('--timeout', type=int, default=900)
+    ap.add_argument('--size', default='640x480', help='window size; other than 640x480 uses r_mode -1')
     args = ap.parse_args()
     names = [v.replace('-', '_') for v in views(FIXTURES[args.fixture])]
     # The engine runs from its own directory (next to its DLLs).
     exe = Path(args.exe).resolve()
     if not exe.is_file():
         sys.exit(f'{exe} does not exist')
+    width, height = (int(v) for v in args.size.split('x'))
+    mode = ['+set', 'r_mode', '3'] if (width, height) == (640, 480) else \
+        ['+set', 'r_mode', '-1', '+set', 'r_customWidth', str(width), '+set', 'r_customHeight', str(height)]
     with tempfile.TemporaryDirectory(prefix='dhewm3-native-') as work:
         base = Path(work) / 'base'
         base.mkdir()
         shutil.copy(root / FIXTURES[args.fixture], base / 'fixture.cfg')
         subprocess.run([str(exe), '+set', 'fs_basepath', args.data, '+set', 'fs_savepath', work,
-                        '+set', 'fs_configpath', work, '+set', 'r_fullscreen', '0', '+set', 'r_mode', '3',
+                        '+set', 'fs_configpath', work, '+set', 'r_fullscreen', '0'] + mode + [
                         '+exec', 'fixture.cfg'], cwd=exe.parent, timeout=args.timeout, check=False)
         shots = sorted((base / 'screenshots').glob('shot*.png'))
         if len(shots) != len(names):

@@ -21,7 +21,8 @@ here = Path(__file__).resolve().parent
 root = here.parents[1]
 
 
-FIXTURES = {'hangar': 'tests/render_hangar_parity.cfg', 'scenes': 'tests/render_scenes_parity.cfg'}
+FIXTURES = {'hangar': 'tests/render_hangar_parity.cfg', 'scenes': 'tests/render_scenes_parity.cfg',
+            'effects': 'tests/render_effects_parity.cfg', 'settings': 'tests/render_settings_parity.cfg'}
 
 
 def fixture(source):

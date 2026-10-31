@@ -76,6 +76,8 @@
     hangar: ['rails', 'stairs', 'saved_rail'],
     scenes: ['mc_underground', 'alphalabs1', 'delta2a', 'enpro', 'recycling1', 'hell1', 'delta5',
       'heat_glass', 'heat_breaky', 'heat_mask', 'reflect_glass', 'imp'],
+    effects: ['hud', 'tunnel', 'berserk', 'damage', 'gamma'],
+    settings: ['shadows_off', 'bump_off', 'specular_off', 'filtering_standard', 'soft_particles_off'],
   };
   // Posts the fixture's screenshots, in order, as <label>-<view>.png.
   B.saveShots = async function (label, views) {

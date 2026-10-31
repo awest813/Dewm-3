@@ -76,7 +76,7 @@ struct webPerf_t {
 	double lightInputFaces, lightKeptFaces;
 	unsigned int lightTriangleBuilds, fusedBoundBuilds;
 	unsigned int bufferDataCalls, bufferSubDataCalls, cpuIndexDraws;
-	unsigned int activeTextureCalls, stencilCalls;
+	unsigned int activeTextureCalls, textureBinds, stencilCalls;
 	double uploadBytes;
 };
 static webPerf_t g_webPerf = {};
@@ -144,7 +144,7 @@ void R_GLES_PerfFrame( double cpuMs ) {
 		g_webPerf.lightInputFaces = g_webPerf.lightKeptFaces = 0;
 		g_webPerf.lightTriangleBuilds = g_webPerf.fusedBoundBuilds = 0;
 		g_webPerf.bufferDataCalls = g_webPerf.bufferSubDataCalls = g_webPerf.cpuIndexDraws = 0;
-		g_webPerf.activeTextureCalls = g_webPerf.stencilCalls = 0;
+		g_webPerf.activeTextureCalls = g_webPerf.textureBinds = g_webPerf.stencilCalls = 0;
 		g_webPerf.uploadBytes = 0;
 		g_webPerf.intervalCount = g_webPerf.frameTics = 0;
 		g_webPerf.slowestMs = 0;
@@ -226,8 +226,8 @@ void R_GLES_PerfFrame( double cpuMs ) {
 	common->Printf("Web perf: uploads %.1f bufferData + %.1f bufferSubData calls, %.1f KB per frame; %.1f CPU-index draws\n",
 		g_webPerf.bufferDataCalls / frames, g_webPerf.bufferSubDataCalls / frames,
 		g_webPerf.uploadBytes / 1024.0 / frames, g_webPerf.cpuIndexDraws / frames);
-	common->Printf("Web perf: %.1f texture-unit selects, %.1f stencil state calls per frame\n",
-		g_webPerf.activeTextureCalls / frames, g_webPerf.stencilCalls / frames);
+	common->Printf("Web perf: %.1f texture-unit selects, %.1f texture binds, %.1f stencil state calls per frame\n",
+		g_webPerf.activeTextureCalls / frames, g_webPerf.textureBinds / frames, g_webPerf.stencilCalls / frames);
 }
 
 static int g_dumpSurfaces = 0;	// websurfaces: 1 armed, 2 dumping this frame
@@ -377,12 +377,12 @@ void R_GLES_DumpDrawSurfs( const viewDef_t *view ) {
 		const idScreenRect &r = surf->scissorRect;
 		if ( r.x2 < g_dumpRegion.x1 || r.x1 > g_dumpRegion.x2 || r.y2 < g_dumpRegion.y1 || r.y1 > g_dumpRegion.y2 ) continue;
 		const idRenderEntityLocal *def = surf->space ? surf->space->entityDef : NULL;
-		common->Printf( "WEB_SURFACE %d sort %g stages %d coverage %d entity %d model %s material %s scissor %d %d %d %d indexes %d\n",
+		common->Printf( "WEB_SURFACE %d sort %g stages %d coverage %d entity %d model %s material %s scissor %d %d %d %d indexes %d depthHack %g soft %d\n",
 			i, surf->sort, surf->material ? surf->material->GetNumStages() : 0,
 			surf->material ? (int)surf->material->Coverage() : -1, def ? def->index : -1,
 			def && def->parms.hModel ? def->parms.hModel->Name() : "-",
 			surf->material ? surf->material->GetName() : "-", r.x1, r.y1, r.x2, r.y2,
-			surf->geo ? surf->geo->numIndexes : 0 );
+			surf->geo ? surf->geo->numIndexes : 0, surf->space ? surf->space->modelDepthHack : 0.0f, ( surf->dsFlags & DSF_SOFT_PARTICLE ) ? 1 : 0 );
 	}
 }
 
@@ -765,41 +765,109 @@ static void APIENTRY GLES_ActiveTexture( GLenum texture ) {
 		GLES_SyncActiveTexture();
 	}
 }
-static void APIENTRY GLES_TexParameteri( GLenum target, GLenum pname, GLint param ) {
+
+// Lazy texture bindings. The engine unbinds units 1-6 after every light's
+// interactions (BindNull) and after shader stages, then binds the same
+// normalization cube, specular table and light images again for the next
+// light. Each WebGL bindTexture is expensive in the browser's GPU process
+// (in the imp combat scene, skipping binds alone raised uncapped throughput
+// by about 45%). glBindTexture therefore records the binding; the real bind
+// is sent when a texture call operates on that unit's target, or before a
+// draw for exactly the units and targets the draw's program samples. Every
+// sampled unit holds the requested texture at every draw, so output cannot
+// change; units the program does not sample may keep a stale texture, which
+// WebGL never reads. r_webLazyTextureBinds 0 (or r_webStateCache 0) binds
+// immediately.
+static idCVar r_webLazyTextureBinds("r_webLazyTextureBinds", "1", CVAR_RENDERER | CVAR_BOOL,
+	"send texture binds only for units the next draw samples");
+enum { GLES_LAZY_UNITS = 16, GLES_LAZY_TARGETS = 3 };
+static const GLenum g_lazyTargets[GLES_LAZY_TARGETS] = { GL_TEXTURE_2D, GL_TEXTURE_CUBE_MAP, GL_TEXTURE_3D };
+static GLuint g_texWant[GLES_LAZY_UNITS][GLES_LAZY_TARGETS];	// requested by the engine
+static GLuint g_texHave[GLES_LAZY_UNITS][GLES_LAZY_TARGETS];	// sent to WebGL
+static int GLES_LazyTargetIndex( GLenum target ) {
+	if ( target == GL_TEXTURE_2D ) return 0;
+	if ( target == GL_TEXTURE_CUBE_MAP || ( target >= GL_TEXTURE_CUBE_MAP_POSITIVE_X && target <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z ) ) return 1;
+	if ( target == GL_TEXTURE_3D ) return 2;
+	return -1;
+}
+static bool GLES_LazyTextureBinds( void ) {
+	return r_webLazyTextureBinds.GetBool() && r_webStateCache.GetBool();
+}
+// Sends unit's requested binding for one target; selects the unit if needed.
+static void GLES_FlushTextureUnit( int unit, int ti ) {
+	if ( g_texHave[unit][ti] == g_texWant[unit][ti] ) return;
+	const GLenum select = GL_TEXTURE0 + unit;
+	if ( g_activeTexture != select ) {
+		g_activeTexture = select;
+		if (g_webPerf.remaining) ++g_webPerf.activeTextureCalls;
+		glActiveTexture( select );
+	}
+	glBindTexture( g_lazyTargets[ti], g_texWant[unit][ti] );
+	g_texHave[unit][ti] = g_texWant[unit][ti];
+	if (g_webPerf.remaining) ++g_webPerf.textureBinds;
+}
+// Before a call that operates on the texture bound to target on the selected unit.
+static void GLES_SyncBoundTexture( GLenum target ) {
+	const int unit = (int)g_wantedActiveTexture - GL_TEXTURE0, ti = GLES_LazyTargetIndex( target );
+	if ( unit >= 0 && unit < GLES_LAZY_UNITS && ti >= 0 ) GLES_FlushTextureUnit( unit, ti );
 	GLES_SyncActiveTexture();
+}
+// Before queries: binding queries must see requested bindings.
+static void GLES_SyncQueriedTexture( GLenum pname ) {
+	if ( pname == GL_TEXTURE_BINDING_2D ) GLES_SyncBoundTexture( GL_TEXTURE_2D );
+	else if ( pname == GL_TEXTURE_BINDING_CUBE_MAP ) GLES_SyncBoundTexture( GL_TEXTURE_CUBE_MAP );
+	else if ( pname == GL_TEXTURE_BINDING_3D ) GLES_SyncBoundTexture( GL_TEXTURE_3D );
+	else GLES_SyncActiveTexture();
+}
+static void APIENTRY GLES_DeleteTextures( GLsizei count, const GLuint *textures ) {
+	// WebGL unbinds a deleted texture from every unit; so does the request.
+	for ( GLsizei i = 0; i < count; ++i ) {
+		for ( int unit = 0; unit < GLES_LAZY_UNITS; ++unit ) {
+			for ( int ti = 0; ti < GLES_LAZY_TARGETS; ++ti ) {
+				if ( textures[i] == 0 ) continue;
+				if ( g_texWant[unit][ti] == textures[i] ) g_texWant[unit][ti] = 0;
+				if ( g_texHave[unit][ti] == textures[i] ) g_texHave[unit][ti] = 0;
+			}
+		}
+	}
+	glDeleteTextures( count, textures );
+}
+
+static void APIENTRY GLES_TexParameteri( GLenum target, GLenum pname, GLint param ) {
+	GLES_SyncBoundTexture( target );
 	glTexParameteri(target, pname, param);
 }
 static void APIENTRY GLES_TexSubImage2D( GLenum target, GLint level, GLint x, GLint y, GLsizei width, GLsizei height,
 	GLenum format, GLenum type, const GLvoid *pixels ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	glTexSubImage2D(target, level, x, y, width, height, format, type, pixels);
 }
 static void APIENTRY GLES_TexImage3D( GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height,
 	GLsizei depth, GLint border, GLenum format, GLenum type, const GLvoid *pixels ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	glTexImage3D(target, level, internalFormat, width, height, depth, border, format, type, pixels);
 }
 static void APIENTRY GLES_CompressedTexImage2D( GLenum target, GLint level, GLenum internalFormat, GLsizei width,
 	GLsizei height, GLint border, GLsizei imageSize, const GLvoid *data ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	glCompressedTexImage2D(target, level, internalFormat, width, height, border, imageSize, data);
 }
 static void APIENTRY GLES_CopyTexImage2D( GLenum target, GLint level, GLenum internalFormat, GLint x, GLint y,
 	GLsizei width, GLsizei height, GLint border ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	glCopyTexImage2D(target, level, internalFormat, x, y, width, height, border);
 }
 // State queries may read the active unit or its bindings.
 static void APIENTRY GLES_GetIntegerv( GLenum pname, GLint *params ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncQueriedTexture( pname );
 	glGetIntegerv(pname, params);
 }
 static void APIENTRY GLES_GetFloatv( GLenum pname, GLfloat *params ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncQueriedTexture( pname );
 	glGetFloatv(pname, params);
 }
 static void APIENTRY GLES_GetBooleanv( GLenum pname, GLboolean *params ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncQueriedTexture( pname );
 	glGetBooleanv(pname, params);
 }
 
@@ -981,6 +1049,11 @@ typedef struct {
 	GLint skyCube; // sky program sampler (unit 0)
 	GLint heat[7]; // modelview, projection, scroll, deform, screen scale/reciprocal, mode
 	GLint colorFraction, colorTarget, screenScale, screenRecip;
+	// Texture units and targets the linked program samples (lazy binds),
+	// read back once from the program after its sampler units are set.
+	GLuint samplersProg;
+	int samplerCount;
+	unsigned char samplerUnit[16], samplerTarget[16];
 } glesProg_t;
 
 static glesProg_t g_progInteraction = {};
@@ -1810,13 +1883,26 @@ static void GLES_FlushInteractionEnv( void ) {
 	}
 }
 
+// Native r_gammaInShader injects POW only into ARB fragment programs
+// (draw_arb2.cpp); fixed-function draws (GUI and HUD, plain texture stages,
+// fog, blend lights, the sky box) are not corrected. The flat and sky programs
+// emulate those draws, so they apply env slot 21 only while the engine has an
+// ARB fragment program enabled (a custom program mapped onto them).
+static const float g_gammaIdentity[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+static bool GLES_EmulatesFixedFunction( const glesProg_t *p ) {
+	return p == &g_progFlat || p == &g_progSky;
+}
+static const float *GLES_ProgramGamma( const glesProg_t *p ) {
+	return GLES_EmulatesFixedFunction( p ) && !g_fragmentProgramEnabled ? g_gammaIdentity : g_glesEnvFragment[21];
+}
+
 static void GLES_UploadProgramUniforms( glesProg_t *p ) {
 	if (g_webPerf.remaining) ++g_webPerf.uniformUploads;
 	// Gamma comes from the cached fragment env slot 21 (RB_SetProgramEnvironment
 	// writes 1s for post-process passes so gamma isn't applied twice — reading
 	// the cvars directly would double-apply it there).
 	if ( p->gamma >= 0 ) {
-		GLES_Uniform4fv( p->gamma, 1, g_glesEnvFragment[21] );
+		GLES_Uniform4fv( p->gamma, 1, GLES_ProgramGamma( p ) );
 	}
 	GLES_UploadAlphaTest( p );
 	if ( p->flatColor >= 0 ) {
@@ -2002,9 +2088,11 @@ static void APIENTRY GLES_ProgramEnvParameter4fvARB( GLenum target, GLuint index
 				else if ( index == 21 ) loc = g_curProg->gamma;
 			}
 		} else {
-			// flat / shadow / glass: only gamma is shared.
+			// flat / shadow / glass: only gamma is shared (fixed-function
+			// emulation applies it only under an ARB fragment program).
 			if ( target == GL_FRAGMENT_PROGRAM_ARB && index == 21 ) {
 				loc = g_curProg->gamma;
+				params = GLES_ProgramGamma( g_curProg );
 			}
 		}
 		if ( loc >= 0 ) {
@@ -2315,16 +2403,70 @@ static void GLES_SyncProgramForDraw( void ) {
 	if ( g_curProg == &g_progFlat ) {
 		GLES_SyncTexgenUniforms();
 	}
+	// Fragment programs toggle without a program change; keep gamma current.
+	if ( GLES_EmulatesFixedFunction( g_curProg ) && g_curProg->gamma >= 0 ) {
+		GLES_Uniform4fv( g_curProg->gamma, 1, GLES_ProgramGamma( g_curProg ) );
+	}
 }
 
 static void APIENTRY GLES_BindTexture( GLenum target, GLuint texture ) {
-	GLES_SyncActiveTexture();
 	int unit = backEnd.glState.currenttmu;
 	if ( unit >= 0 && unit < GLES_MAX_TEXGEN_UNITS ) {
 		g_unitTarget[unit] = target;
 		g_unitId[unit] = texture;
 	}
+	const int selected = (int)g_wantedActiveTexture - GL_TEXTURE0, ti = GLES_LazyTargetIndex( target );
+	if ( selected >= 0 && selected < GLES_LAZY_UNITS && ti >= 0 ) {
+		g_texWant[selected][ti] = texture;
+		if ( !GLES_LazyTextureBinds() ) GLES_FlushTextureUnit( selected, ti );
+		return;
+	}
+	GLES_SyncActiveTexture();
 	glBindTexture( target, texture );
+	if (g_webPerf.remaining) ++g_webPerf.textureBinds;
+}
+
+// Reads the program's active samplers and the unit each one is set to.
+static void GLES_ReadProgramSamplers( glesProg_t *p ) {
+	p->samplersProg = p->prog;
+	p->samplerCount = 0;
+	GLint uniforms = 0;
+	glGetProgramiv( p->prog, GL_ACTIVE_UNIFORMS, &uniforms );
+	for ( GLint i = 0; i < uniforms; ++i ) {
+		char name[128];
+		GLint size = 0;
+		GLenum type = 0;
+		glGetActiveUniform( p->prog, (GLuint)i, sizeof( name ), NULL, &size, &type, name );
+		const GLenum target = type == GL_SAMPLER_2D ? GL_TEXTURE_2D : type == GL_SAMPLER_CUBE ? GL_TEXTURE_CUBE_MAP :
+			type == GL_SAMPLER_3D ? GL_TEXTURE_3D : 0;
+		if ( !target ) continue;
+		GLint unit = -1;
+		glGetUniformiv( p->prog, glGetUniformLocation( p->prog, name ), &unit );
+		if ( p->samplerCount >= 16 || unit < 0 || unit >= GLES_LAZY_UNITS ) {
+			// Not representable: fall back to syncing every unit.
+			p->samplerCount = -1;
+			return;
+		}
+		p->samplerUnit[p->samplerCount] = (unsigned char)unit;
+		p->samplerTarget[p->samplerCount] = (unsigned char)GLES_LazyTargetIndex( target );
+		++p->samplerCount;
+	}
+}
+
+// Before a draw: send the requested binding of every unit the program samples.
+static void GLES_SyncDrawTextures( void ) {
+	if ( !GLES_LazyTextureBinds() ) return;
+	glesProg_t *p = g_curProg;
+	if ( p == NULL || p->prog == 0 ) {
+		return;
+	}
+	if ( p->samplersProg != p->prog ) GLES_ReadProgramSamplers( p );
+	if ( p->samplerCount < 0 ) {
+		for ( int unit = 0; unit < GLES_LAZY_UNITS; ++unit )
+			for ( int ti = 0; ti < GLES_LAZY_TARGETS; ++ti ) GLES_FlushTextureUnit( unit, ti );
+		return;
+	}
+	for ( int i = 0; i < p->samplerCount; ++i ) GLES_FlushTextureUnit( p->samplerUnit[i], p->samplerTarget[i] );
 }
 
 static void (APIENTRYP RealDrawElements)( GLenum mode, GLsizei count, GLenum type, const GLvoid *indices ) = NULL;
@@ -2358,8 +2500,8 @@ static void GLES_ProbePixel( void ) {
 	const bool inRange = g_pixelDraw >= g_pixelFirst && g_pixelDraw <= g_pixelLastDraw;
 	if ( !inRange && !memcmp( rgba, g_pixelLastColor, 4 ) ) return;
 	memcpy( g_pixelLastColor, rgba, 4 );
-	common->Printf( "WEB_PIXEL draw %d -> %d %d %d %d state 0x%llx program %s texgen %d useVtx %g inverse %g color %g %g %g %g colorArray %d tex0 %s tex1 %s tex2 %s tex3 %s tex4 %s\n",
-		g_pixelDraw, rgba[0], rgba[1], rgba[2], rgba[3], (unsigned long long)backEnd.glState.glStateBits,
+	common->Printf( "WEB_PIXEL draw %d -> %d %d %d %d proj14 %.9g spaceHack %g state 0x%llx program %s texgen %d useVtx %g inverse %g color %g %g %g %g colorArray %d tex0 %s tex1 %s tex2 %s tex3 %s tex4 %s\n",
+		g_pixelDraw, rgba[0], rgba[1], rgba[2], rgba[3], g_mProj[14], backEnd.currentSpace ? backEnd.currentSpace->modelDepthHack : -1.0f, (unsigned long long)backEnd.glState.glStateBits,
 		GLES_ProgramName( g_curProg ), GLES_TexgenActive() ? 1 : 0,
 		g_useVtxColor, g_inverseVtxColor, g_flatColor[0], g_flatColor[1], g_flatColor[2], g_flatColor[3],
 		g_attribState[2].enabled ? 1 : 0, GLES_ImageName( g_unitId[0] ), GLES_ImageName( g_unitId[1] ),
@@ -2373,6 +2515,7 @@ static void GLES_ProbePixel( void ) {
 static void APIENTRY GLES_DrawElements( GLenum mode, GLsizei count, GLenum type, const GLvoid *indices ) {
 	if (g_webPerf.remaining) ++g_webPerf.draws;
 	GLES_SyncProgramForDraw();
+	GLES_SyncDrawTextures();
 	GLES_FlushInteractionEnv();
 	static int diagnostics = 0;
 	bool diagnose = !r_ignoreGLErrors.GetBool() && diagnostics < 12;
@@ -2406,6 +2549,7 @@ static void APIENTRY GLES_DrawElements( GLenum mode, GLsizei count, GLenum type,
 static void APIENTRY GLES_DrawArrays( GLenum mode, GLint first, GLsizei count ) {
 	if (g_webPerf.remaining) ++g_webPerf.draws;
 	GLES_SyncProgramForDraw();
+	GLES_SyncDrawTextures();
 	GLES_FlushInteractionEnv();
 	if ( RealDrawArrays != NULL ) {
 		GLES_SyncVertexState( false );
@@ -2415,7 +2559,7 @@ static void APIENTRY GLES_DrawArrays( GLenum mode, GLint first, GLsizei count ) 
 }
 
 static void APIENTRY GLES_TexParameterf( GLenum target, GLenum pname, GLfloat value ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	if ( pname == GL_TEXTURE_BORDER_COLOR ) return;
 	if ( pname == GL_TEXTURE_LOD_BIAS_EXT ) return;
 	if ( (pname == GL_TEXTURE_WRAP_S || pname == GL_TEXTURE_WRAP_T || pname == GL_TEXTURE_WRAP_R)
@@ -2561,7 +2705,7 @@ static void APIENTRY GLES_Frustum( GLdouble left, GLdouble right, GLdouble botto
 // no-ops (glConfig.textureCompressionAvailable=false keeps the engine from
 // requesting them for normal images).
 static void APIENTRY GLES_TexImage2D( GLenum target, GLint level, GLint internalFormat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const GLvoid *pixels ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	GLenum internal = (GLenum)internalFormat;
 	GLenum fmt = format;
 	GLenum typ = type;
@@ -2651,7 +2795,7 @@ static void APIENTRY GLES_TexImage2D( GLenum target, GLint level, GLint internal
 
 static void APIENTRY GLES_CopyTexSubImage2D( GLenum target, GLint level, GLint xoffset, GLint yoffset,
                                            GLint x, GLint y, GLsizei width, GLsizei height ) {
-	GLES_SyncActiveTexture();
+	GLES_SyncBoundTexture( target );
 	GLint texture = 0;
 	glGetIntegerv( GL_TEXTURE_BINDING_2D, &texture );
 	if ( target != GL_TEXTURE_2D || g_depthTextures.count((GLuint)texture) == 0 ) {
@@ -2734,6 +2878,9 @@ void R_GLES_LoadFunctions( void ) {
 	g_bufferInfo.clear();
 	g_boundProgram = 0;
 	g_activeTexture = g_wantedActiveTexture = GL_TEXTURE0;
+	// A new context starts with every texture unit unbound.
+	memset( g_texWant, 0, sizeof( g_texWant ) );
+	memset( g_texHave, 0, sizeof( g_texHave ) );
 	g_interactionEnvDirty = true;
 	// Query names belong to the previous context.
 	g_webGpu.pending.Clear();
@@ -2817,6 +2964,7 @@ void R_GLES_LoadFunctions( void ) {
 	qglPolygonMode = GLES_NopTyped;
 	qglDrawBuffer = GLES_NopTyped;
 	qglBindTexture = GLES_BindTexture;
+	qglDeleteTextures = GLES_DeleteTextures;
 	// Everything that depends on the selected texture unit first sends a
 	// deferred GLES_ActiveTexture selection.
 	qglTexParameteri = GLES_TexParameteri;

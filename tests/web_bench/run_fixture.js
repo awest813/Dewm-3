@@ -5,10 +5,12 @@
 //   compare=a,b         reference capture prefixes, e.g. native,baseline
 //   frames=300          webperf / GPU sample length
 //   histogram=1         also record WebGL calls per frame
-//   width=640           canvas CSS width. The engine derives its projection
+//   width=640           canvas CSS width (height=<px> for non-4:3 buffers). The engine derives its projection
 //                       from the window aspect, so parity captures need the
 //                       native fixture's exact 640x480 (r_mode 3) buffer.
 canvas.style.width = canvas.style.maxWidth = (ARGS.width || 640) + 'px';
+// height=<px> fixes a non-4:3 drawing buffer (e.g. widescreen parity at 854x480).
+if (ARGS.height) Object.assign(canvas.style, { height: ARGS.height + 'px', maxWidth: 'none', aspectRatio: 'auto' });
 await new Promise((resolve, reject) => {
   const s = document.createElement('script');
   s.src = '/bench/bench.js?' + Date.now();

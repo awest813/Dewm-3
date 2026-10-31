@@ -58,13 +58,18 @@ using GLsizeiptr = long; using GLsizeiptrARB = long; using GLintptr = long; usin
 constexpr GLenum GL_ELEMENT_ARRAY_BUFFER=0x8893, GL_ARRAY_BUFFER=0x8892;
 constexpr GLenum GL_UNSIGNED_INT=0x1405, GL_UNSIGNED_SHORT=0x1403, GL_STREAM_DRAW=0x88e0, GL_NO_ERROR=0;
 constexpr GLenum GL_VERTEX_PROGRAM_ARB=0x8620, GL_FRAGMENT_PROGRAM_ARB=0x8804;
-constexpr GLenum GL_TEXTURE_2D=0x0de1, GL_TEXTURE_CUBE_MAP=0x8513;
+constexpr GLenum GL_TEXTURE_2D=0x0de1, GL_TEXTURE_CUBE_MAP=0x8513, GL_TEXTURE_3D=0x806f;
+constexpr GLenum GL_TEXTURE_CUBE_MAP_POSITIVE_X=0x8515, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z=0x851a;
+constexpr GLenum GL_TEXTURE_BINDING_2D=0x8069, GL_TEXTURE_BINDING_CUBE_MAP=0x8514, GL_TEXTURE_BINDING_3D=0x806a;
 constexpr GLenum GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT=0x84ff;
 constexpr GLenum GL_TEXTURE0=0x84c0, GL_FRONT=0x404, GL_BACK=0x405, GL_FRONT_AND_BACK=0x408;
 constexpr GLenum GL_KEEP=0x1e00, GL_ALWAYS=0x207, GL_INCR_WRAP=0x8507, GL_DECR_WRAP=0x8508, GL_EQUAL=0x202, GL_ACTIVE_TEXTURE=0x84e0;
 int activeTextureCalls=0, stencilOpCalls=0, stencilFuncCalls=0, unitDependentCalls=0, subUploads=0;
 GLenum lastActiveTexture=0, lastStencilFace=0;
 void glActiveTexture(GLenum unit) { ++activeTextureCalls; lastActiveTexture=unit; }
+int textureBindCalls=0; GLenum lastBindUnit=0; GLuint lastBoundTexture=0;
+void glBindTexture(GLenum,GLuint texture) { ++textureBindCalls; lastBindUnit=lastActiveTexture; lastBoundTexture=texture; }
+void glDeleteTextures(GLsizei,const GLuint*) {}
 void glTexParameteri(GLenum,GLenum,GLint) { ++unitDependentCalls; }
 void glTexSubImage2D(GLenum,GLint,GLint,GLint,GLsizei,GLsizei,GLenum,GLenum,const GLvoid*) { ++unitDependentCalls; }
 void glTexImage3D(GLenum,GLint,GLint,GLsizei,GLsizei,GLsizei,GLint,GLenum,GLenum,const GLvoid*) { ++unitDependentCalls; }
@@ -110,7 +115,7 @@ GLuint g_unitId[2]={1,1}, activeProgram=0;
 bool texgen=false;
 int checks=0, actualBinds=0, uploads=0, bufferUploads=0, drawCalls=0;
 struct { int remaining=1, programBinds=0, draws=0, bufferCreates=0, uniformWrites=0, bufferBinds=0, attribWrites=0,
-    bufferDataCalls=0, bufferSubDataCalls=0, cpuIndexDraws=0, activeTextureCalls=0, stencilCalls=0,
+    bufferDataCalls=0, bufferSubDataCalls=0, cpuIndexDraws=0, activeTextureCalls=0, textureBinds=0, stencilCalls=0,
     vertexArrayBinds=0, vertexArrayCreates=0; double uploadBytes=0; } g_webPerf;
 GLuint g_boundProgram=0, g_boundIndexBuffer=0, g_boundArrayBuffer=0, g_scratchIndexBuffer=0, actualIndexBuffer=0;
 struct { bool enabled=true; bool GetBool(){return enabled;} } r_webStateCache;
@@ -161,6 +166,7 @@ struct Common { void Printf(const char*,...){++errorReports;} } commonObject, *c
 void GLES_UploadProgramUniforms(glesProg_t*) { ++uploads; }
 void GLES_SyncTexgenUniforms() {}
 void GLES_ProbePixel() {}  // diagnostic webpixel tracer is not under test
+void GLES_SyncDrawTextures() {}  // per-program sampler readback needs a real context
 bool GLES_TexgenActive() { return texgen; }
 void check(bool ok, const char *label) {
     if (!ok) { std::fprintf(stderr,"FAIL %s\n",label); std::exit(1); }
@@ -175,6 +181,9 @@ harness += function('GLES_InitAnisotropy') + '\n'
 harness += 'idCVar r_webDeferInteractionEnv("r_webDeferInteractionEnv","1",CVAR_RENDERER|CVAR_BOOL,"");\n'
 harness += 'bool g_interactionEnvDirty=true;\n'
 harness += function('GLES_FlushInteractionEnv') + '\n'
+harness += 'static const float g_gammaIdentity[4] = { 1.0f, 1.0f, 1.0f, 1.0f };\n'
+harness += function('GLES_EmulatesFixedFunction', return_type='bool') + '\n'
+harness += function(r'\*GLES_ProgramGamma', return_type='const float') + '\n'
 harness += '\n'.join(function(name) for name in (
     'R_GLES_MarkInteraction', 'GLES_UseSelectedProgram',
     'GLES_BindProgramARB', 'GLES_SyncProgramForDraw', 'GLES_DrawElements',
@@ -308,6 +317,7 @@ int main() {
     check(g_boundIndexBuffer==0 && actualIndexBuffer==17 && boundVao==0,"scratch EBO draws in the default vertex array and restores the requested state");
     GLES_DrawElements(4,3,GL_UNSIGNED_INT,indices);
     check(bufferUploads==2 && lastBytes==12,"32-bit CPU index upload uses correct byte count");
+    envUploads=0;  // earlier flat draws upload their (identity) gamma
     g_curProg=&g_progInteraction;
     g_interactionEnvDirty=false;
     GLfloat values[]={1,2,3,4};
@@ -542,6 +552,18 @@ int main() {
     GLES_ActiveTexture(GL_TEXTURE0+2);
     check(activeTextureCalls==5,"disabled state cache selects immediately for comparison");
     r_webStateCache.enabled=true;
+    // Lazy texture binds: a requested binding reaches WebGL before texture work on that unit.
+    g_texWant[4][0]=77; textureBindCalls=0; GLES_ActiveTexture(GL_TEXTURE0+4);
+    GLES_TexParameteri(GL_TEXTURE_2D,0,0);
+    check(textureBindCalls==1 && lastBoundTexture==77 && lastBindUnit==GL_TEXTURE0+4,"texture work first sends the unit's requested binding");
+    GLES_TexSubImage2D(GL_TEXTURE_2D,0,0,0,1,1,0,0,nullptr);
+    check(textureBindCalls==1,"a sent binding is not sent again");
+    g_texWant[5][1]=78; GLES_FlushTextureUnit(5,1);
+    check(textureBindCalls==2 && lastBindUnit==GL_TEXTURE0+5 && g_activeTexture==GL_TEXTURE0+5,"flushing another unit selects it");
+    GLES_TexSubImage2D(GL_TEXTURE_2D,0,0,0,1,1,0,0,nullptr);
+    check(g_activeTexture==GL_TEXTURE0+4 && textureBindCalls==2,"texture work restores the requested unit selection");
+    { GLuint dead=77; GLES_DeleteTextures(1,&dead); }
+    check(g_texWant[4][0]==0 && g_texHave[4][0]==0 && g_texWant[5][1]==78,"deleting a texture clears its requested and sent bindings only");
     // Stencil state starts from a new context's defaults.
     GLES_ResetStencilState(); stencilOpCalls=stencilFuncCalls=0;
     GLES_StencilOp(GL_KEEP,GL_KEEP,GL_KEEP);GLES_StencilFunc(GL_ALWAYS,0,~0u);
@@ -580,6 +602,21 @@ int main() {
     GLES_SyncProgramForDraw();
     check(g_curProg==&g_progFlat,"unit zero enabled as 2D ignores its stale cube binding");
     g_unitTarget[0]=GL_TEXTURE_2D;
+    // In-shader gamma: native injects POW only into ARB fragment programs, so
+    // fixed-function emulation (flat, sky) uses identity gamma unless one is enabled.
+    g_glesEnvFragment[21][0]=g_glesEnvFragment[21][1]=g_glesEnvFragment[21][2]=1.5f; g_glesEnvFragment[21][3]=0.75f;
+    backEnd.glState.tmu[0].textureType=TT_2D; backEnd.glState.tmu[1].textureType=TT_DISABLED; texgen=false;
+    g_curProg=&g_progFlat; R_GLES_MarkInteraction(0); g_vertexProgramEnabled=g_fragmentProgramEnabled=false;
+    GLES_SyncProgramForDraw();
+    check(g_curProg==&g_progFlat && lastUniform==21 && lastValue[0]==1 && lastValue[3]==1,"fixed-function draws are not gamma corrected");
+    g_fragmentProgramEnabled=true; GLES_SyncProgramForDraw();
+    check(lastUniform==21 && lastValue[0]==1.5f && lastValue[3]==0.75f,"an enabled ARB fragment program on the flat shader applies gamma");
+    g_fragmentProgramEnabled=false; GLES_SyncProgramForDraw();
+    check(lastUniform==21 && lastValue[0]==1,"disabling the fragment program restores identity gamma");
+    GLfloat gammaParm[]={1.25f,1.25f,1.25f,0.5f};
+    GLES_ProgramEnvParameter4fvARB(GL_FRAGMENT_PROGRAM_ARB,21,gammaParm);
+    check(lastValue[0]==1 && g_glesEnvFragment[21][0]==1.25f,"gamma env writes are cached but fixed-function draws stay uncorrected");
+    g_glesEnvFragment[21][0]=g_glesEnvFragment[21][1]=g_glesEnvFragment[21][2]=g_glesEnvFragment[21][3]=1;
     std::printf("%d renderer-state checks passed\n",checks);
 }
 '''
